@@ -1,0 +1,68 @@
+From: Balázs Gyimesi <gyimesi.balazs@gmail.com>
+Subject: [PATCH] mp: uniphy: re-apply forced SGMII after the port reset
+
+adpt_mp_uniphy_mode_configure() sets channel 0 force mode and then resets
+the uniphy port through GCC, which returns the channel to in-band AN. On
+the Xiaomi CB0401V2 the QCA8337 end of the link runs forced (as on stock),
+so the SerDes never syncs. Re-apply force mode after the reset when the
+switch node carries qcom,uniphy-sgmii-forced.
+
+---
+--- a/src/adpt/mp/adpt_mp_uniphy.c
++++ b/src/adpt/mp/adpt_mp_uniphy.c
+@@ -20,6 +20,7 @@
+  * @defgroup
+  * @{
+  */
++#include <linux/of.h>
+ #include "sw.h"
+ #include "hppe_uniphy_reg.h"
+ #include "hppe_uniphy.h"
+@@ -183,6 +184,38 @@
+ 	return SW_OK;
+ }
+ 
++/*
++ * The GCC port reset in adpt_mp_uniphy_mode_configure() returns channel 0 to
++ * its defaults (in-band AN, not forced), undoing the force mode set before it.
++ * Boards whose SGMII partner runs forced (qcom,uniphy-sgmii-forced on the
++ * switch node) need it re-applied, or the SerDes never syncs.
++ */
++static void
++adpt_mp_uniphy_force_reapply(a_uint32_t dev_id, a_uint32_t uniphy_index)
++{
++	union uniphy_channel0_input_output_4_u uniphy_force_ctrl;
++	struct device_node *np;
++	bool forced;
++
++	np = of_find_compatible_node(NULL, NULL, "qcom,ess-switch-ipq50xx");
++	forced = np && of_property_read_bool(np, "qcom,uniphy-sgmii-forced");
++	of_node_put(np);
++	if (!forced ||
++	    !hsl_port_feature_get(dev_id, SSDK_PHYSICAL_PORT2, PHY_F_FORCE))
++		return;
++
++	memset(&uniphy_force_ctrl, 0, sizeof(uniphy_force_ctrl));
++	if (hppe_uniphy_channel0_input_output_4_get(dev_id, uniphy_index,
++		&uniphy_force_ctrl) != SW_OK)
++		return;
++	uniphy_force_ctrl.bf.newaddedfromhere_ch0_force_speed_25m =
++		UNIPHY_FORCE_SPEED_ENABLE;
++	uniphy_force_ctrl.bf.newaddedfromhere_ch0_mr_an_enable_25m = 0;
++	hppe_uniphy_channel0_input_output_4_set(dev_id, uniphy_index,
++		&uniphy_force_ctrl);
++	SSDK_INFO("uniphy %d sgmii forced (no in-band AN)\n", uniphy_index);
++}
++
+ static sw_error_t
+ adpt_mp_uniphy_mode_ctrl_set(a_uint32_t dev_id,
+ 	a_uint32_t uniphy_index, a_uint32_t mode)
+@@ -375,6 +408,8 @@
+ 		A_TRUE);
+ 	SW_RTN_ON_ERROR (rv);
+ 
++	adpt_mp_uniphy_force_reapply(dev_id, index);
++
+ 	if (SW_OK == rv) {
+ 		/* index + 1 point to mp uniphy clock */
+ 		ssdk_mp_raw_clock_set(index + 1, UNIPHY_RX, clock);
