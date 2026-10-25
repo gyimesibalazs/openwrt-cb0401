@@ -1,0 +1,21 @@
+#!/bin/sh /etc/rc.common
+# Xiaomi CB0401V2: switch the Quectel RG520N on. Nothing else powers the modem
+# on the bootm path: the stock firmware does it from /etc/init.d/boot by
+# pulsing the PWRKEY line (gpio30, exposed as the "mb_onoff" LED) high for 1 s.
+# The modem then enumerates on USB (option ttyUSB0-3 + qmi_wwan/wwan0) ~20 s
+# later.
+START=11
+
+start() {
+	local led=/sys/class/leds/mb_onoff/brightness
+
+	[ "$(board_name)" = xiaomi,cb0401v2 ] || return 0
+	[ -w "$led" ] || {
+		logger -t cb0401v2-modem "mb_onoff LED missing, modem not switched on"
+		return 1
+	}
+	echo 1 > "$led"
+	sleep 1
+	echo 0 > "$led"
+	logger -t cb0401v2-modem "pulsed modem PWRKEY (gpio30)"
+}
