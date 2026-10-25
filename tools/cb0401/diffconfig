@@ -1,0 +1,15 @@
+# Build seed for the Xiaomi CB0401V2:
+#   cp tools/cb0401/diffconfig .config && make defconfig
+CONFIG_TARGET_qualcommax=y
+CONFIG_TARGET_qualcommax_ipq50xx=y
+CONFIG_TARGET_qualcommax_ipq50xx_DEVICE_xiaomi_cb0401v2=y
+# initramfs FIT for TFTP RAM boot (first install, tests)
+CONFIG_TARGET_ROOTFS_INITRAMFS=y
+CONFIG_PACKAGE_luci=y
+CONFIG_PACKAGE_luci-proto-modemmanager=y
+# modem status (cell, signal, CA) and band locking pages
+CONFIG_PACKAGE_luci-app-3ginfo-lite=y
+CONFIG_PACKAGE_luci-app-modemband=y
+# the box sits behind CGNAT: remote access goes out through WireGuard
+CONFIG_PACKAGE_luci-proto-wireguard=y
+CONFIG_PACKAGE_wireguard-tools=y
