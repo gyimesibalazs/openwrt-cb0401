@@ -1,0 +1,31 @@
+From: Balazs Gyimesi <gyimesi.balazs@gmail.com>
+Subject: spi: qpic-snand: allow skipping the SPI config init on TZ-locked controllers
+
+On secure-boot IPQ5018 units (Xiaomi CB0401V2) TrustZone XPU-protects the
+SPI-NAND mode registers (NAND_FLASH_SPI_CFG, NAND_NUM_ADDR_CYCLES,
+NAND_BUSY_CHECK_WAIT_CNT): any access from the HLOS is a secure violation
+that halts the SoC. TZ has already programmed them for the boot chain, so
+with the "qcom,tz-locked-spi-cfg" DT property the driver skips its own
+init and uses the configuration left by the firmware.
+
+--- a/drivers/spi/spi-qpic-snand.c
++++ b/drivers/spi/spi-qpic-snand.c
+@@ -1624,7 +1624,17 @@
+ 	if (ret)
+ 		goto err_snand_alloc;
+ 
+-	ret = qcom_spi_init(snandc);
++	/*
++	 * Secure-boot units may have the SPI config registers locked by
++	 * TrustZone (XPU); touching them halts the system. TZ has set them up
++	 * for the boot chain already, so keep its configuration.
++	 */
++	if (of_property_read_bool(dev->of_node, "qcom,tz-locked-spi-cfg")) {
++		dev_info(dev, "SPI config registers are TZ-locked, skipping init\n");
++		ret = 0;
++	} else {
++		ret = qcom_spi_init(snandc);
++	}
+ 	if (ret)
+ 		goto err_spi_init;
+ 
