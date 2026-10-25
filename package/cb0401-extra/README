@@ -1,0 +1,8 @@
+Third-party LTE/5G web UI packages for the Xiaomi CB0401V2 image, vendored
+from upstream at pinned commits (GPL; unmodified):
+
+  luci-app-3ginfo-lite  https://github.com/4IceG/luci-app-3ginfo-lite  060026c1c7f25876e930638ab82f4e8fa85112f4
+  luci-app-modemband    https://github.com/4IceG/luci-app-modemband    9d2477269726be7b40f4b9f526f1ca25c6b748ff
+  modemband             https://github.com/obsy/modemband              0a70ccfd06cd5915574b8b709ec841558f738b8a
+
+Both know the RG520N (USB 2c7c:0801) and talk to it on /dev/ttyUSB2.
