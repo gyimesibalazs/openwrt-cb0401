@@ -52,6 +52,32 @@ remove_oem_ubi_volume() {
 	fi
 }
 
+xiaomi_cb0401v2_prepare_ubi() {
+	local mtdnum
+	local ubidev
+
+	mtdnum=$(find_mtd_index "$CI_UBIPART")
+	if [ ! "$mtdnum" ]; then
+		echo "unable to find mtd partition $CI_UBIPART"
+		return 1
+	fi
+
+	ubidev=$(nand_find_ubi "$CI_UBIPART")
+	if [ ! "$ubidev" ]; then
+		ubiattach --mtdn="$mtdnum"
+		ubidev=$(nand_find_ubi "$CI_UBIPART")
+	fi
+
+	# an OpenWrt UBI: upgrade it in place, keeping the erase counters
+	[ "$ubidev" ] && [ "$(nand_find_volume "$ubidev" rootfs_data)" ] && return 0
+
+	# the first install: the partition still holds the three stock UBI
+	# images (rootfs, rootfs_1, overlay), which must not be attached as one
+	echo "no OpenWrt UBI on $CI_UBIPART, formatting it"
+	[ "$ubidev" ] && ubidetach --mtdn="$mtdnum"
+	ubiformat /dev/mtd$mtdnum -y
+}
+
 linksys_bootconfig_set_primaryboot() {
 	local partname=$1
 	local tempfile
@@ -166,6 +192,12 @@ linksys_mx_pre_upgrade() {
 }
 
 platform_check_image() {
+	case "$(board_name)" in
+	xiaomi,cb0401v2)
+		# the fixed "ubi" partition is only right on the stock layout
+		cb0401v2-check-layout || return 1
+		;;
+	esac
 	return 0;
 }
 
@@ -228,6 +260,12 @@ platform_do_upgrade() {
 		CI_KERN_UBIPART="ubi_kernel"
 		CI_ROOT_UBIPART="rootfs"
 		CI_DATA_UBIPART="rootfs"
+		nand_do_upgrade "$1"
+		;;
+	xiaomi,cb0401v2)
+		# one UBI over the stock rootfs, rootfs_1 and overlay partitions
+		CI_UBIPART="ubi"
+		xiaomi_cb0401v2_prepare_ubi || return 1
 		nand_do_upgrade "$1"
 		;;
 	yuncore,ax830|\

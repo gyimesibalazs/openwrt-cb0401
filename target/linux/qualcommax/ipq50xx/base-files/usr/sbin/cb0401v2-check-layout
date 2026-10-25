@@ -1,0 +1,84 @@
+#!/bin/sh
+# Xiaomi CB0401V2: check that the NAND still carries the stock partition table
+# (MIBIB) the image is built for. The DTS uses fixed partitions and merges the
+# stock rootfs, rootfs_1 and overlay into one "ubi" partition, so a unit with
+# a different layout would get the wrong blocks erased by ubiformat or
+# sysupgrade.
+#
+#   cb0401v2-check-layout [MIBIB dump]   (default: the live 0:mibib partition)
+
+# name, first block, block count (128 KiB blocks), as in the stock MIBIB
+EXPECTED='0:SBL1 0 4
+0:MIBIB 4 4
+0:BOOTCONFIG 8 2
+0:BOOTCONFIG1 10 2
+0:QSEE 12 8
+0:QSEE_1 20 8
+0:DEVCFG 28 2
+0:DEVCFG_1 30 2
+0:CDT 32 2
+0:CDT_1 34 2
+0:APPSBLENV 36 4
+0:APPSBL 40 10
+0:APPSBL_1 50 10
+0:ART 60 8
+0:TRAINING 68 4
+bdata 72 4
+crash 76 4
+crash_syslog 80 4
+rootfs 84 248
+rootfs_1 332 248
+overlay 580 266
+modem_image 846 1181'
+
+fail() { echo "cb0401v2-check-layout: $*" >&2; exit 1; }
+
+if [ -n "$1" ]; then
+	src=$1
+else
+	mtd=$(sed -n 's/^\(mtd[0-9]*\): .*"0:mibib"$/\1/p' /proc/mtd)
+	[ -n "$mtd" ] || fail "no 0:mibib partition"
+	src=/dev/$mtd
+	grep -q '^mtd[0-9]*: 05f40000 00020000 "ubi"$' /proc/mtd ||
+		fail "no 95 MiB \"ubi\" partition at the expected place"
+fi
+
+# the partition table sits in the second 2 KiB page of the MIBIB
+table=$(dd if="$src" bs=2048 skip=1 count=1 2>/dev/null |
+	hexdump -v -e '1/1 "%02x"' | awk '
+	function le32(o,   v, i) {
+		v = 0
+		for (i = 3; i >= 0; i--)
+			v = v * 256 + (index(H, substr($0, o + i * 2, 1)) - 1) * 16 + \
+				index(H, substr($0, o + i * 2 + 1, 1)) - 1
+		return v
+	}
+	BEGIN { H = "0123456789abcdef" }
+	substr($0, 1, 16) != "aa73ee55dbbd5ee3" { exit 1 }
+	{
+		n = le32(25)
+		for (e = 0; e < n; e++) {
+			o = 33 + e * 56
+			name = ""
+			for (c = 0; c < 16; c++) {
+				ch = (index(H, substr($0, o + c * 2, 1)) - 1) * 16 + \
+					index(H, substr($0, o + c * 2 + 1, 1)) - 1
+				if (ch == 0) break
+				name = name sprintf("%c", ch)
+			}
+			print name, le32(o + 32), le32(o + 40)
+		}
+	}') || fail "no MIBIB partition table in $src"
+
+[ "$table" = "$EXPECTED" ] || {
+	echo "$EXPECTED" | T="$table" awk '
+		BEGIN { n = split(ENVIRON["T"], t, "\n") }
+		{ e[NR] = $0 }
+		END {
+			for (i = 1; i <= (NR > n ? NR : n); i++)
+				if (e[i] != t[i])
+					printf "  expected: %s\n  found:    %s\n", e[i], t[i]
+		}' >&2
+	fail "the stock partition table differs from the expected one, refusing"
+}
+echo "cb0401v2-check-layout: stock partition table as expected"

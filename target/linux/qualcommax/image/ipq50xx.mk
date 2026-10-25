@@ -205,6 +205,23 @@ endif
 endef
 TARGET_DEVICES += xiaomi_ax6000
 
+define Device/xiaomi_cb0401v2
+	$(call Device/FitImage)
+	$(call Device/UbiFit)
+	DEVICE_VENDOR := Xiaomi
+	DEVICE_MODEL := CB0401V2
+	DEVICE_ALT0_VENDOR := Xiaomi
+	DEVICE_ALT0_MODEL := Magenta 5G AX5400
+	DEVICE_ALT0_VARIANT := V2
+	DEVICE_DTS_CONFIG := config@mp03.6-c1
+	SOC := ipq5018
+	BLOCKSIZE := 128k
+	PAGESIZE := 2048
+	DEVICE_PACKAGES := kmod-ath11k-pci ath11k-firmware-qcn9074 \
+		xiaomi-cb0401v2-wifi-firmware
+endef
+TARGET_DEVICES += xiaomi_cb0401v2
+
 define Device/yuncore_ax830
 	$(call Device/FitImage)
 	$(call Device/UbiFit)
