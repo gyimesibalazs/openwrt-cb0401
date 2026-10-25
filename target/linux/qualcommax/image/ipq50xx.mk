@@ -245,7 +245,8 @@ define Device/xiaomi_cb0401v2
 	NAND_SIZE := 256m
 	DEVICE_PACKAGES := kmod-ath11k-pci ath11k-firmware-qcn9074 \
 		xiaomi-cb0401v2-wifi-firmware \
-		xiaomi-cb0401v2-modem kmod-usb-serial-option
+		xiaomi-cb0401v2-modem kmod-usb-serial-option \
+		i2c-tools
 endef
 TARGET_DEVICES += xiaomi_cb0401v2
 

@@ -1,0 +1,15 @@
+#!/bin/sh
+# Xiaomi CB0401V2: default config of the NFC tag (see /usr/sbin/cb0401v2-nfc)
+. /lib/functions.sh
+[ "$(board_name)" = xiaomi,cb0401v2 ] || exit 0
+[ -f /etc/config/nfc ] && exit 0
+
+touch /etc/config/nfc
+uci -q batch <<EOT
+set nfc.nfc=nfc
+set nfc.nfc.enabled='1'
+set nfc.nfc.iface=''
+set nfc.nfc.url=''
+commit nfc
+EOT
+exit 0
