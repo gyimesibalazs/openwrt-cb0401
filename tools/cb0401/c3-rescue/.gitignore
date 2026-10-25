@@ -1,0 +1,4 @@
+# build output of compile.sh
+/out/
+# local credentials, see c3_uart_bridge/secrets.h.example
+/c3_uart_bridge/secrets.h

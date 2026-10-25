@@ -1,0 +1,35 @@
+# Build seed for the Xiaomi CB0401V2 on the NSS tree (branch cb0401-nss):
+#   cp tools/cb0401/diffconfig .config && make defconfig
+CONFIG_TARGET_qualcommax=y
+CONFIG_TARGET_qualcommax_ipq50xx=y
+CONFIG_TARGET_qualcommax_ipq50xx_DEVICE_xiaomi_cb0401v2=y
+# initramfs FIT for TFTP RAM boot (first install, tests)
+CONFIG_TARGET_ROOTFS_INITRAMFS=y
+CONFIG_PACKAGE_luci=y
+CONFIG_PACKAGE_luci-proto-modemmanager=y
+# modem status (cell, signal, CA) and band locking pages
+CONFIG_PACKAGE_luci-app-3ginfo-lite=y
+CONFIG_PACKAGE_luci-app-modemband=y
+# the box sits behind CGNAT: remote access goes out through WireGuard
+CONFIG_PACKAGE_luci-proto-wireguard=y
+CONFIG_PACKAGE_wireguard-tools=y
+
+# NSS offload, as in the tree's CI image config (.github/ci/ipq50xx/common.config):
+# nss-tools-dwmac pulls in the plane and arms it at boot; it must be =y.
+CONFIG_PACKAGE_nss-tools-dwmac=y
+CONFIG_PACKAGE_nss-firmware=y
+CONFIG_NSS_FIRMWARE_VERSION_12_5=y
+CONFIG_NSS_DRV_VLAN_ENABLE=y
+CONFIG_PACKAGE_kmod-qca-nss-drv-pppoe=y
+CONFIG_PACKAGE_kmod-qca-nss-drv-netlink=y
+CONFIG_PACKAGE_nssinfo=y
+CONFIG_PACKAGE_libnl-nss=y
+CONFIG_PACKAGE_MAC80211_NSS_SUPPORT=y
+CONFIG_ATH11K_NSS_SUPPORT=y
+CONFIG_NSS_DRV_WIFIOFFLOAD_ENABLE=y
+CONFIG_NSS_DRV_WIFI_EXT_VDEV_ENABLE=y
+# 512 MB board with large stock no-map regions (~393 MB usable)
+CONFIG_ATH11K_MEM_PROFILE_512M=y
+CONFIG_NSS_MEM_PROFILE_MEDIUM=y
+CONFIG_PACKAGE_ip-full=y
+CONFIG_PACKAGE_iperf3=y
