@@ -1,0 +1,130 @@
+#!/bin/sh
+# Xiaomi CB0401 / CB0401V2: check that the NAND still carries the stock
+# partition table (MIBIB) the image is built for. The DTS uses fixed
+# partitions and merges the stock rootfs, rootfs_1 and overlay into one "ubi"
+# partition, so a unit with a different layout would get the wrong blocks
+# erased by ubiformat or sysupgrade.
+#
+#   cb0401-check-layout [MIBIB dump]
+#
+# With no argument it checks the live 0:mibib partition against the table of
+# the running board. With a MIBIB dump as argument it accepts the dump if it
+# matches any known CB0401 layout (used by the backup tool, offline).
+
+# name, first block, block count (128 KiB blocks), as in the stock MIBIB.
+# The two variants share the whole boot chain up to crash_syslog; they differ
+# from rootfs on: the CB0401 has larger rootfs/overlay and no modem_image, the
+# CB0401V2 is smaller and keeps a 147 MiB modem_image at the end.
+EXPECTED_COMMON='0:SBL1 0 4
+0:MIBIB 4 4
+0:BOOTCONFIG 8 2
+0:BOOTCONFIG1 10 2
+0:QSEE 12 8
+0:QSEE_1 20 8
+0:DEVCFG 28 2
+0:DEVCFG_1 30 2
+0:CDT 32 2
+0:CDT_1 34 2
+0:APPSBLENV 36 4
+0:APPSBL 40 10
+0:APPSBL_1 50 10
+0:ART 60 8
+0:TRAINING 68 4
+bdata 72 4
+crash 76 4
+crash_syslog 80 4'
+
+EXPECTED_cb0401v2="$EXPECTED_COMMON
+rootfs 84 248
+rootfs_1 332 248
+overlay 580 266
+modem_image 846 1181"
+
+EXPECTED_cb0401="$EXPECTED_COMMON
+rootfs 84 288
+rootfs_1 372 288
+overlay 660 344"
+
+# the "ubi" region /proc/mtd should show, per board (size erasesize)
+UBISIZE_cb0401v2='05f40000 00020000'
+UBISIZE_cb0401='07300000 00020000'
+
+fail() { echo "cb0401-check-layout: $*" >&2; exit 1; }
+
+# read a MIBIB (file or device) and print its "name first blocks" table
+read_table() {
+	# the partition table sits in the second 2 KiB page of the MIBIB
+	dd if="$1" bs=2048 skip=1 count=1 2>/dev/null |
+		hexdump -v -e '1/1 "%02x"' | awk '
+		function le32(o,   v, i) {
+			v = 0
+			for (i = 3; i >= 0; i--)
+				v = v * 256 + (index(H, substr($0, o + i * 2, 1)) - 1) * 16 + \
+					index(H, substr($0, o + i * 2 + 1, 1)) - 1
+			return v
+		}
+		BEGIN { H = "0123456789abcdef" }
+		substr($0, 1, 16) != "aa73ee55dbbd5ee3" { exit 1 }
+		{
+			n = le32(25)
+			for (e = 0; e < n; e++) {
+				o = 33 + e * 56
+				name = ""
+				for (c = 0; c < 16; c++) {
+					ch = (index(H, substr($0, o + c * 2, 1)) - 1) * 16 + \
+						index(H, substr($0, o + c * 2 + 1, 1)) - 1
+					if (ch == 0) break
+					name = name sprintf("%c", ch)
+				}
+				print name, le32(o + 32), le32(o + 40)
+			}
+		}'
+}
+
+# print the diff of two tables ("expected" vs "found") to stderr
+show_diff() {
+	echo "$1" | T="$2" awk '
+		BEGIN { n = split(ENVIRON["T"], t, "\n") }
+		{ e[NR] = $0 }
+		END {
+			for (i = 1; i <= (NR > n ? NR : n); i++)
+				if (e[i] != t[i])
+					printf "  expected: %s\n  found:    %s\n", e[i], t[i]
+		}' >&2
+}
+
+if [ -n "$1" ]; then
+	# offline: accept the dump if it matches any known layout
+	table=$(read_table "$1") || fail "no MIBIB partition table in $1"
+	if [ "$table" = "$EXPECTED_cb0401v2" ]; then
+		echo "cb0401-check-layout: matches the CB0401V2 layout"
+		exit 0
+	fi
+	if [ "$table" = "$EXPECTED_cb0401" ]; then
+		echo "cb0401-check-layout: matches the CB0401 layout"
+		exit 0
+	fi
+	echo "cb0401-check-layout: $1 matches no known CB0401 layout" >&2
+	show_diff "$EXPECTED_cb0401v2" "$table"
+	exit 1
+fi
+
+# live: pick the table of the running board
+. /lib/functions.sh
+case "$(board_name)" in
+xiaomi,cb0401v2) expected="$EXPECTED_cb0401v2"; ubisize="$UBISIZE_cb0401v2" ;;
+xiaomi,cb0401)   expected="$EXPECTED_cb0401";   ubisize="$UBISIZE_cb0401" ;;
+*) fail "not a CB0401 board" ;;
+esac
+
+mtd=$(sed -n 's/^\(mtd[0-9]*\): .*"0:mibib"$/\1/p' /proc/mtd)
+[ -n "$mtd" ] || fail "no 0:mibib partition"
+grep -q "^mtd[0-9]*: $ubisize \"ubi\"\$" /proc/mtd ||
+	fail "no \"ubi\" partition of the expected size at the expected place"
+
+table=$(read_table "/dev/$mtd") || fail "no MIBIB partition table on /dev/$mtd"
+[ "$table" = "$expected" ] || {
+	show_diff "$expected" "$table"
+	fail "the stock partition table differs from the expected one, refusing"
+}
+echo "cb0401-check-layout: stock partition table as expected"
