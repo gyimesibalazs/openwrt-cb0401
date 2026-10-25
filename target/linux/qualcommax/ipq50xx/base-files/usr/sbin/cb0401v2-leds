@@ -1,0 +1,83 @@
+#!/bin/sh
+# Xiaomi CB0401V2 front LEDs, same scheme as the stock firmware
+# (/lib/mobile.d/01-signal_led.sh + /etc/config/xqled):
+#   4G   on = LTE connected, good signal; slow blink = weak signal
+#   5G   on = 5G (NSA or SA) connected, good signal; slow blink = weak
+#        (only one of 4G/5G is lit; both off while the WAN is down)
+#   WiFi on = at least one WiFi interface is up
+# Signal comes from ModemManager (the modem is on PCIe, QMI over QRTR), so
+# the AT port stays free for luci-app-3ginfo-lite / modemband.
+
+WEAK_RSRP=-110		# dBm: below this the LED blinks
+INTERVAL=10
+
+LED4=/sys/class/leds/white:wan-online-4
+LED5=/sys/class/leds/white:wan-online-5
+LEDW=/sys/class/leds/white:wlan
+
+# set_led <led> on|off|blink, only when it changes (a rewrite restarts blink)
+set_led() {
+	local led="$1" mode="$2" var cur
+
+	var="state_$(basename "$led" | tr -c 'a-z0-9\n' _)"
+	eval cur=\$$var
+	[ "$cur" = "$mode" ] && return
+	eval $var=$mode
+
+	case "$mode" in
+	on)	echo none > "$led/trigger"; echo 1 > "$led/brightness" ;;
+	off)	echo none > "$led/trigger"; echo 0 > "$led/brightness" ;;
+	blink)	echo timer > "$led/trigger"
+		echo 1000 > "$led/delay_on"; echo 1000 > "$led/delay_off" ;;
+	esac
+}
+
+# signal_led <led> <rsrp>
+signal_led() {
+	if [ -n "$2" ] && [ "${2%.*}" -lt "$WEAK_RSRP" ]; then
+		set_led "$1" blink
+	else
+		set_led "$1" on
+	fi
+}
+
+wifi_up() {
+	local dev
+
+	for dev in /sys/class/net/*; do
+		[ -e "$dev/phy80211" ] || continue
+		[ "$(cat "$dev/operstate" 2>/dev/null)" = up ] && return 0
+	done
+	return 1
+}
+
+while :; do
+	if wifi_up; then set_led "$LEDW" on; else set_led "$LEDW" off; fi
+
+	nr= lte=
+	if ifstatus wwan 2>/dev/null | grep -q '"up": true'; then
+		# extended signal info needs polling enabled once per modem
+		[ "$setup" = 1 ] || { mmcli -m any --signal-setup=$INTERVAL >/dev/null 2>&1 && setup=1; }
+		sig="$(mmcli -m any --signal-get -K 2>/dev/null)"
+		nr=$(echo "$sig" | sed -n 's/^modem\.signal\.5g\.rsrp *: *\(-\{0,1\}[0-9][0-9.]*\)$/\1/p')
+		lte=$(echo "$sig" | sed -n 's/^modem\.signal\.lte\.rsrp *: *\(-\{0,1\}[0-9][0-9.]*\)$/\1/p')
+		# no carrier of that kind reads -32768
+		[ -n "$nr" ] && [ "${nr%.*}" -le -200 ] && nr=
+		[ -n "$lte" ] && [ "${lte%.*}" -le -200 ] && lte=
+	else
+		setup=0
+	fi
+
+	if [ -n "$nr" ]; then
+		set_led "$LED4" off
+		signal_led "$LED5" "$nr"
+	elif [ -n "$lte" ]; then
+		set_led "$LED5" off
+		signal_led "$LED4" "$lte"
+	else
+		set_led "$LED4" off
+		set_led "$LED5" off
+	fi
+
+	sleep "$INTERVAL"
+done
