@@ -1,0 +1,16 @@
+--- a/src/plugins/qcom-soc/mm-broadband-modem-qmi-qcom-soc.c
++++ b/src/plugins/qcom-soc/mm-broadband-modem-qmi-qcom-soc.c
+@@ -131,6 +131,13 @@
+     if (g_strcmp0 (net_port_driver, "bam-dmux") == 0)
+         return peek_port_qmi_for_data_bam_dmux (self, data, out_endpoint, error);
+ 
++    /* Qualcomm SoC host with a PCIe/MHI attached modem whose control plane is
++     * QMI over QRTR (e.g. Quectel RG520N on an IPQ5018 board): the data port is
++     * an mhi_net netdev. Like IPA, any QMI port can bind it; the endpoint info
++     * (PCIe, interface 4) comes from the QMI port's net driver setup. */
++    if (g_strcmp0 (net_port_driver, "mhi_net") == 0)
++        return peek_port_qmi_for_data_ipa (self, data, out_endpoint, error);
++
+     g_set_error (error,
+                  MM_CORE_ERROR,
+                  MM_CORE_ERROR_FAILED,

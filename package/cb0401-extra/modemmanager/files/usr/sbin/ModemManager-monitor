@@ -70,10 +70,10 @@ mm_monitor_cache_add() {
 	}
 
 	sysfspath=$(modemmanager_get_field "${modemstatus}" "modem.generic.physdev")
-	[ -n "${sysfspath}" ] || {
-		mm_log "err" "No 'sysfspath' for object '$object' not found..."
-		return 2
-	}
+	# SoC-integrated / QRTR-controlled modems (plugin qcom-soc) have no physdev
+	# sysfs path; fall back to the device uid so the netifd interface still gets
+	# its availability notifications.
+	[ -n "${sysfspath}" ] || sysfspath="${device}"
 
 	mm_log "debug" "add object '$object' to monitore cache (device=${device},sysfspath=${sysfspath})"
 
