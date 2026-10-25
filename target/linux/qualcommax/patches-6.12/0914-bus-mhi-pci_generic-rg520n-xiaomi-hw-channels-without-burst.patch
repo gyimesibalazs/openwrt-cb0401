@@ -1,0 +1,100 @@
+From: Balázs Gyimesi <gyimesi.balazs@gmail.com>
+Subject: [PATCH] bus: mhi: pci_generic: Quectel RG520N-EB in Xiaomi CB0401V2
+
+The RG520N-EB of the Xiaomi CB0401V2 reports the generic Qualcomm IDs
+17cb:0308 (subsystem 17cb:0308) and gets the sdx65 configuration. Under
+load its hardware data path stalls in both directions after a few MB,
+while QRTR control keeps working: in burst mode the host rings a channel
+doorbell once and then waits for a doorbell mode event, which this
+firmware stops sending.
+
+Run the IP_HW0 channels without burst mode for this ID combination, so
+every queued element rings the doorbell.
+
+---
+--- a/drivers/bus/mhi/host/pci_generic.c
++++ b/drivers/bus/mhi/host/pci_generic.c
+@@ -294,6 +294,73 @@
+ 	.event_cfg = modem_qcom_v1_mhi_events,
+ };
+ 
++/*
++ * Quectel RG520N-EB as built into the Xiaomi CB0401V2 (firmware
++ * RG520NEBDCR03A03M4G_XM, generic 17cb:0308 IDs): the sdx65 layout, except
++ * that the hardware channels run without burst mode. In burst mode the host
++ * rings a channel doorbell once and then waits for the modem's doorbell mode
++ * event; this firmware stops sending those under load, and both directions
++ * of the data path stall (QRTR control keeps working).
++ */
++static const struct mhi_channel_config modem_quectel_rg520n_xiaomi_channels[] = {
++	MHI_CHANNEL_CONFIG_UL(4, "DIAG", 16, 1),
++	MHI_CHANNEL_CONFIG_DL(5, "DIAG", 16, 1),
++	MHI_CHANNEL_CONFIG_UL(12, "MBIM", 4, 0),
++	MHI_CHANNEL_CONFIG_DL(13, "MBIM", 4, 0),
++	MHI_CHANNEL_CONFIG_UL(14, "QMI", 4, 0),
++	MHI_CHANNEL_CONFIG_DL(15, "QMI", 4, 0),
++	MHI_CHANNEL_CONFIG_UL(20, "IPCR", 8, 0),
++	MHI_CHANNEL_CONFIG_DL_AUTOQUEUE(21, "IPCR", 8, 0),
++	MHI_CHANNEL_CONFIG_UL_FP(34, "FIREHOSE", 32, 0),
++	MHI_CHANNEL_CONFIG_DL_FP(35, "FIREHOSE", 32, 0),
++	MHI_CHANNEL_CONFIG_UL(46, "IP_SW0", 64, 2),
++	MHI_CHANNEL_CONFIG_DL(47, "IP_SW0", 64, 3),
++	{
++		.num = 100,
++		.name = "IP_HW0",
++		.num_elements = 128,
++		.event_ring = 4,
++		.dir = DMA_TO_DEVICE,
++		.ee_mask = BIT(MHI_EE_AMSS),
++		.pollcfg = 0,
++		.doorbell = MHI_DB_BRST_DISABLE,
++		.lpm_notify = false,
++		.offload_channel = false,
++		.doorbell_mode_switch = false,
++	},
++	{
++		.num = 101,
++		.name = "IP_HW0",
++		.num_elements = 128,
++		.event_ring = 5,
++		.dir = DMA_FROM_DEVICE,
++		.ee_mask = BIT(MHI_EE_AMSS),
++		.pollcfg = 0,
++		.doorbell = MHI_DB_BRST_DISABLE,
++		.lpm_notify = false,
++		.offload_channel = false,
++		.doorbell_mode_switch = false,
++	},
++};
++
++static const struct mhi_controller_config modem_quectel_rg520n_xiaomi_config = {
++	.max_channels = 128,
++	.timeout_ms = 8000,
++	.num_channels = ARRAY_SIZE(modem_quectel_rg520n_xiaomi_channels),
++	.ch_cfg = modem_quectel_rg520n_xiaomi_channels,
++	.num_events = ARRAY_SIZE(modem_qcom_v1_mhi_events),
++	.event_cfg = modem_qcom_v1_mhi_events,
++};
++
++static const struct mhi_pci_dev_info mhi_quectel_rg520n_xiaomi_info = {
++	.name = "quectel-rg520n-xiaomi",
++	.edl_trigger = true,
++	.config = &modem_quectel_rg520n_xiaomi_config,
++	.bar_num = MHI_PCI_DEFAULT_BAR_NUM,
++	.dma_data_width = 32,
++	.sideband_wake = false,
++};
++
+ static const struct mhi_pci_dev_info mhi_qcom_sdx75_info = {
+ 	.name = "qcom-sdx75m",
+ 	.fw = "qcom/sdx75m/xbl.elf",
+@@ -797,6 +864,9 @@
+ 	/* Telit FE990A */
+ 	{ PCI_DEVICE_SUB(PCI_VENDOR_ID_QCOM, 0x0308, 0x1c5d, 0x2015),
+ 		.driver_data = (kernel_ulong_t) &mhi_telit_fe990a_info },
++	/* Quectel RG520N-EB in the Xiaomi CB0401V2: generic Qualcomm IDs */
++	{ PCI_DEVICE_SUB(PCI_VENDOR_ID_QCOM, 0x0308, PCI_VENDOR_ID_QCOM, 0x0308),
++		.driver_data = (kernel_ulong_t) &mhi_quectel_rg520n_xiaomi_info },
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_QCOM, 0x0308),
+ 		.driver_data = (kernel_ulong_t) &mhi_qcom_sdx65_info },
+ 	/* Telit FN990B40 (sdx72) */
