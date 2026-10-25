@@ -1,0 +1,37 @@
+--- a/src/mm-shared-qmi.c
++++ b/src/mm-shared-qmi.c
+@@ -32,6 +32,7 @@
+ #include "mm-iface-modem-location.h"
+ #include "mm-sim-qmi.h"
+ #include "mm-shared-qmi.h"
++#include "mm-base-modem.h"
+ #include "mm-modem-helpers-qmi.h"
+ 
+ /* Default session id to use in LOC operations */
+@@ -3258,6 +3259,26 @@
+     ctx->config_active_i = -1;
+     g_task_set_task_data (task, ctx, (GDestroyNotify)load_carrier_config_context_free);
+ 
++    /* Some modems (e.g. Quectel RG520N over MHI/QRTR) only answer a handful of
++     * the parallel PDC "Get Config Info" requests; the remaining ones time out
++     * and the consecutive-timeout counter ends up marking the modem invalid.
++     * Allow skipping the whole carrier config load with a udev tag set on the
++     * data (net) port. */
++    {
++        MMPort *data;
++
++        data = mm_base_modem_peek_best_data_port (MM_BASE_MODEM (self), MM_PORT_TYPE_NET);
++        if (data &&
++            mm_kernel_device_get_global_property_as_boolean (mm_port_peek_kernel_device (data),
++                                                             "ID_MM_QMI_SKIP_CARRIER_CONFIG")) {
++            mm_obj_dbg (self, "skipping carrier config load: ID_MM_QMI_SKIP_CARRIER_CONFIG set");
++            g_task_return_new_error (task, MM_CORE_ERROR, MM_CORE_ERROR_UNSUPPORTED,
++                                     "carrier config load disabled by udev tag");
++            g_object_unref (task);
++            return;
++        }
++    }
++
+     /* Load PDC client */
+     client = mm_shared_qmi_peek_client (MM_SHARED_QMI (self),
+                                         QMI_SERVICE_PDC,

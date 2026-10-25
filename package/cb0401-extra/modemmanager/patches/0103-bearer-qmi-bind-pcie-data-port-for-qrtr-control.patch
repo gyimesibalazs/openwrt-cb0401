@@ -1,0 +1,76 @@
+--- a/src/mm-bearer-qmi.c
++++ b/src/mm-bearer-qmi.c
+@@ -1631,6 +1631,21 @@
+     connect_context_step (task);
+ }
+ 
++/* A QRTR based QMI control port is not implicitly tied to any data endpoint.
++ * When the data port is a PCIe/MHI netdev (e.g. a Quectel RG520N behind a
++ * Qualcomm IPQ SoC host, control over QRTR, data over mhi_net) the WDS client
++ * must be explicitly bound to the PCIe endpoint even without multiplexing,
++ * otherwise "Start Network" fails with InvalidOperation. Mux id 0 selects the
++ * plain (non-QMAP) data path. */
++static gboolean
++qrtr_pcie_bind_needed (ConnectContext *ctx)
++{
++    return (ctx->mux_id == QMI_DEVICE_MUX_ID_UNBOUND &&
++            ctx->endpoint.type == QMI_DATA_ENDPOINT_TYPE_PCIE &&
++            ctx->qmi &&
++            mm_port_get_subsys (MM_PORT (ctx->qmi)) == MM_PORT_SUBSYS_QRTR);
++}
++
+ static void
+ bind_mux_data_port_ready (QmiClientWds *client,
+                           GAsyncResult *res,
+@@ -2081,18 +2096,21 @@
+             return;
+         }
+ 
+-        /* If mux id given, bind mux data port */
+-        if (ctx->sio_port_failed || ctx->mux_id != QMI_DEVICE_MUX_ID_UNBOUND) {
++        /* If mux id given (or a QRTR+PCIe setup needs an explicit binding), bind mux data port */
++        if (ctx->sio_port_failed || ctx->mux_id != QMI_DEVICE_MUX_ID_UNBOUND || qrtr_pcie_bind_needed (ctx)) {
+             g_autoptr(QmiMessageWdsBindMuxDataPortInput) input = NULL;
++            guint8 bind_mux_id;
+ 
+-            mm_obj_dbg (self, "binding to mux id %d", ctx->mux_id);
++            bind_mux_id = (ctx->mux_id != QMI_DEVICE_MUX_ID_UNBOUND) ? (guint8) ctx->mux_id : 0;
++            mm_obj_dbg (self, "binding to mux id %u (endpoint %s, interface %u)", bind_mux_id,
++                        qmi_data_endpoint_type_get_string (ctx->endpoint.type), ctx->endpoint.interface_number);
+             input = qmi_message_wds_bind_mux_data_port_input_new ();
+             qmi_message_wds_bind_mux_data_port_input_set_endpoint_info (
+                 input,
+                 ctx->endpoint.type,
+                 ctx->endpoint.interface_number,
+                 NULL);
+-            qmi_message_wds_bind_mux_data_port_input_set_mux_id (input, ctx->mux_id, NULL);
++            qmi_message_wds_bind_mux_data_port_input_set_mux_id (input, bind_mux_id, NULL);
+ 
+             qmi_client_wds_bind_mux_data_port (ctx->client_ipv4,
+                                                input,
+@@ -2226,18 +2244,21 @@
+             return;
+         }
+ 
+-        /* If mux id given, bind mux data port */
+-        if (ctx->sio_port_failed || ctx->mux_id != QMI_DEVICE_MUX_ID_UNBOUND) {
++        /* If mux id given (or a QRTR+PCIe setup needs an explicit binding), bind mux data port */
++        if (ctx->sio_port_failed || ctx->mux_id != QMI_DEVICE_MUX_ID_UNBOUND || qrtr_pcie_bind_needed (ctx)) {
+             g_autoptr(QmiMessageWdsBindMuxDataPortInput) input = NULL;
++            guint8 bind_mux_id;
+ 
+-            mm_obj_dbg (self, "binding to mux id %d", ctx->mux_id);
++            bind_mux_id = (ctx->mux_id != QMI_DEVICE_MUX_ID_UNBOUND) ? (guint8) ctx->mux_id : 0;
++            mm_obj_dbg (self, "binding to mux id %u (endpoint %s, interface %u)", bind_mux_id,
++                        qmi_data_endpoint_type_get_string (ctx->endpoint.type), ctx->endpoint.interface_number);
+             input = qmi_message_wds_bind_mux_data_port_input_new ();
+             qmi_message_wds_bind_mux_data_port_input_set_endpoint_info (
+                 input,
+                 ctx->endpoint.type,
+                 ctx->endpoint.interface_number,
+                 NULL);
+-            qmi_message_wds_bind_mux_data_port_input_set_mux_id (input, ctx->mux_id, NULL);
++            qmi_message_wds_bind_mux_data_port_input_set_mux_id (input, bind_mux_id, NULL);
+ 
+             qmi_client_wds_bind_mux_data_port (ctx->client_ipv6,
+                                                input,

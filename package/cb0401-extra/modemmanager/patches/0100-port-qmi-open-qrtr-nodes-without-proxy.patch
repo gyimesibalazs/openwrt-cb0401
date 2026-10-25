@@ -1,0 +1,29 @@
+From: cb0401 bring-up
+Subject: port-qmi: open QRTR nodes without the qmi-proxy
+
+With a Quectel RG520N on PCIe/MHI whose QMI lives on QRTR, the qmi-proxy stops
+answering once ModemManager opens several QMI clients concurrently; direct
+opens (as qmicli does) work. Open QRTR nodes directly.
+
+--- a/src/mm-port-qmi.c
++++ b/src/mm-port-qmi.c
+@@ -2554,6 +2554,10 @@
+ 
+             /* Now open the QMI device without any data format CTL flag */
+             open_flags = (QMI_DEVICE_OPEN_FLAGS_VERSION_INFO | QMI_DEVICE_OPEN_FLAGS_PROXY);
++            /* QRTR nodes: open directly, the qmi-proxy stops answering with
++             * several concurrent clients on a QRTR endpoint (RG520N over MHI) */
++            if (self->priv->node)
++                open_flags &= ~QMI_DEVICE_OPEN_FLAGS_PROXY;
+             open_flags_str = qmi_device_open_flags_build_string_from_mask (open_flags);
+             mm_obj_dbg (self, "Opening device with flags: %s...", open_flags_str);
+             qmi_device_open (ctx->device,
+@@ -2602,6 +2606,8 @@
+         open_flags = (QMI_DEVICE_OPEN_FLAGS_VERSION_INFO |
+                       QMI_DEVICE_OPEN_FLAGS_PROXY        |
+                       QMI_DEVICE_OPEN_FLAGS_NET_NO_QOS_HEADER);
++        if (self->priv->node)
++            open_flags &= ~QMI_DEVICE_OPEN_FLAGS_PROXY;
+ 
+         ctx->kernel_data_modes = load_current_kernel_data_modes (self, ctx->device);
+ 
