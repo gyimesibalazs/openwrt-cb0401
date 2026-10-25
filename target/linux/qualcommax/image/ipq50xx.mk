@@ -218,7 +218,8 @@ define Device/xiaomi_cb0401v2
 	BLOCKSIZE := 128k
 	PAGESIZE := 2048
 	DEVICE_PACKAGES := kmod-ath11k-pci ath11k-firmware-qcn9074 \
-		xiaomi-cb0401v2-wifi-firmware
+		xiaomi-cb0401v2-wifi-firmware \
+		xiaomi-cb0401v2-modem kmod-usb-serial-option
 endef
 TARGET_DEVICES += xiaomi_cb0401v2
 

@@ -1,0 +1,25 @@
+ACTION!="add|change|move|bind", GOTO="mm_cb0401v2_end"
+# Xiaomi CB0401V2 / Quectel RG520N-EB on PCIe/MHI: QMI lives on QRTR (node 3),
+# the MHI data netdevs are plain raw-IP. Attach them to the qcom-soc (QRTR)
+# modem; the dedicated MBIM/QMI/DIAG MHI channels are not usable on this
+# firmware (an MBIM session even silences QRTR), so ignore those ports.
+# ModemManager's rules parser takes exactly ONE assignment per line (the last
+# item); two assignments on one line make it drop the whole file.
+
+# the USB side (AT/GNSS ports, used by 3ginfo / modemband) is not a modem here
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="2c7c", ENV{ID_MM_DEVICE_IGNORE}="1"
+
+# IP_SW0 is not used for data, keep only mhi_hwip0 as the bearer netdev
+SUBSYSTEM=="net", KERNEL=="mhi_swip0", ENV{ID_MM_PORT_IGNORE}="1"
+SUBSYSTEM=="net", KERNEL=="mhi_swip0", GOTO="mm_cb0401v2_end"
+SUBSYSTEM=="net", DRIVERS=="mhi_net", GOTO="mm_cb0401v2_net"
+SUBSYSTEM=="wwan", ENV{ID_MM_PORT_IGNORE}="1"
+GOTO="mm_cb0401v2_end"
+
+LABEL="mm_cb0401v2_net"
+ENV{ID_MM_QCOM_SOC}="1"
+ENV{ID_MM_PHYSDEV_UID}="qcom-soc"
+ENV{ID_MM_CANDIDATE}="1"
+ENV{ID_MM_QMI_SKIP_CARRIER_CONFIG}="1"
+
+LABEL="mm_cb0401v2_end"

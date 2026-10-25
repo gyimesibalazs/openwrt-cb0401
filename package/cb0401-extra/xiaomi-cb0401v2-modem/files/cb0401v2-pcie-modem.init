@@ -1,0 +1,43 @@
+#!/bin/sh /etc/rc.common
+# Xiaomi CB0401V2: the RG520N is switched on at boot (cb0401v2-modem, S11)
+# after PCIe1 has probed, and the qcom-pcie driver trains the link only once.
+# Rescan until the modem shows up (on a warm reboot it is already there).
+#
+# ModemManager starts while the modem is still bringing up MHI/QRTR and then
+# never builds the qcom-soc modem; a restart once the modem is up does. So
+# give it a grace period and restart it once if the modem is still missing.
+#
+# mhi-pci-generic enables runtime PM (M3 after 2 s idle); with this modem the
+# data channel stops after a few of those suspend/resume cycles while QRTR
+# keeps answering (connected, no traffic). Keep the device awake.
+START=19
+USE_PROCD=1
+
+start_service() {
+	procd_open_instance
+	procd_set_param command /bin/sh -c '
+		log() { logger -t cb0401v2-pcie-modem "$*"; }
+		n=0
+		while [ ! -d /sys/bus/pci/devices/0001:01:00.0 ]; do
+			[ $n -lt 30 ] || { log "modem did not show up on PCIe1 within 120 s"; exit 1; }
+			echo 1 > /sys/bus/pci/rescan
+			sleep 4
+			n=$((n + 1))
+		done
+		log "modem on PCIe1 after $((n * 4)) s"
+
+		dev=/sys/bus/pci/devices/0001:01:00.0
+		n=0
+		while [ ! -e $dev/driver ] && [ $n -lt 30 ]; do sleep 1; n=$((n + 1)); done
+		echo on > $dev/power/control
+
+		n=0
+		while [ $n -lt 12 ]; do
+			sleep 5
+			mmcli -L 2>/dev/null | grep -q "/Modem/" && exit 0
+			n=$((n + 1))
+		done
+		log "ModemManager did not pick up the modem, restarting it"
+		/etc/init.d/modemmanager restart'
+	procd_close_instance
+}
