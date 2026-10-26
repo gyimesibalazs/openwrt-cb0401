@@ -52,7 +52,7 @@ remove_oem_ubi_volume() {
 	fi
 }
 
-xiaomi_cb0401v2_prepare_ubi() {
+xiaomi_cb0401_prepare_ubi() {
 	local mtdnum
 	local ubidev
 
@@ -193,9 +193,10 @@ linksys_mx_pre_upgrade() {
 
 platform_check_image() {
 	case "$(board_name)" in
+	xiaomi,cb0401|\
 	xiaomi,cb0401v2)
 		# the fixed "ubi" partition is only right on the stock layout
-		cb0401v2-check-layout || return 1
+		cb0401-check-layout || return 1
 		;;
 	esac
 	return 0;
@@ -262,10 +263,11 @@ platform_do_upgrade() {
 		CI_DATA_UBIPART="rootfs"
 		nand_do_upgrade "$1"
 		;;
+	xiaomi,cb0401|\
 	xiaomi,cb0401v2)
 		# one UBI over the stock rootfs, rootfs_1 and overlay partitions
 		CI_UBIPART="ubi"
-		xiaomi_cb0401v2_prepare_ubi || return 1
+		xiaomi_cb0401_prepare_ubi || return 1
 		nand_do_upgrade "$1"
 		;;
 	yuncore,ax830|\

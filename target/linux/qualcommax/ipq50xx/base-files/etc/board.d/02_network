@@ -16,6 +16,7 @@ ipq50xx_setup_interfaces()
 	glinet,gl-b3000)
 		ucidef_set_interfaces_lan_wan "lan1 lan2" "wan"
 		;;
+	xiaomi,cb0401|\
 	xiaomi,cb0401v2)
 		# Both ports are LAN on the stock firmware, WAN is the modem
 		ucidef_set_interface_lan "lan1 lan2"
