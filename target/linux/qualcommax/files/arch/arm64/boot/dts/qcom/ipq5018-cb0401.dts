@@ -9,9 +9,12 @@
  *
  * EXPERIMENTAL, NOT TESTED ON HARDWARE. Built from a full NAND dump of a
  * stock unit (partition table verified, GPIOs from the shared mp03.6-c1
- * reference). Unverified and to confirm on a real unit: RAM size (assumed
- * 512 MiB like the V2), whether the modem also exposes USB AT ports, and the
- * QCN9074/IPQ5018 WiFi board data (stock cnss2.bdf_integrated=0x24).
+ * reference). The RAM size is left to the bootloader (U-Boot fixes up the
+ * memory node from SMEM at bootm, reportedly 1 GB here). To confirm on a real
+ * unit: the reserved-memory map below mirrors the V2's 512 MiB stock layout,
+ * so a 1 GB unit's stock no-map regions above 512 MiB must be re-checked
+ * against its /proc/iomem; whether the modem also exposes USB AT ports; and
+ * the QCN9074/IPQ5018 WiFi board data (stock cnss2.bdf_integrated=0x24).
  *
  * The unit is secure-boot fused: it runs OpenWrt through U-Boot bootm from
  * the merged "ubi" partition, started by the ESP32-C3 rescue console (see

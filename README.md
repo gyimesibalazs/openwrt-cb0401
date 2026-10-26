@@ -45,8 +45,9 @@ platform, so the install works the same way; it differs in the flash layout
 (a `17cb:0306` MHI modem instead of the RG520N). The install scripts and
 `sysupgrade` detect either layout automatically. Build its WiFi files from a
 CB0401 unit's own stock with `extract-stock-firmware.sh -m cb0401`. The modem
-is not wired up yet, and the DTS still needs confirming on a real unit (RAM
-size, modem USB side). See the `xiaomi,cb0401` device.
+is not wired up yet, and the DTS still needs confirming on a real unit (the
+reserved-memory map on a 1 GB unit, the modem USB side). See the
+`xiaomi,cb0401` device.
 
 ## How it works, and why a hardware mod is needed
 
