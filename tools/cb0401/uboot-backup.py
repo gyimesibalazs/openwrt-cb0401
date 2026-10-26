@@ -32,17 +32,25 @@ RAM_WINDOW = 0x6000000          # 0x44000000..0x4a000000 is free under U-Boot
 CHUNK = 0x4000000               # modem_image is read in pieces that fit
 BLOCK = 128 * 1024
 
-# name, first block, block count: the stock MIBIB of the CB0401V2
-EXPECTED = [
+# name, first block, block count: the stock MIBIB. The boot chain up to
+# crash_syslog is identical; the CB0401V2 keeps a 147 MiB modem_image at the
+# end, the CB0401 (the original) has larger rootfs/overlay and no modem_image.
+_COMMON = [
     ("0:SBL1", 0, 4), ("0:MIBIB", 4, 4), ("0:BOOTCONFIG", 8, 2),
     ("0:BOOTCONFIG1", 10, 2), ("0:QSEE", 12, 8), ("0:QSEE_1", 20, 8),
     ("0:DEVCFG", 28, 2), ("0:DEVCFG_1", 30, 2), ("0:CDT", 32, 2),
     ("0:CDT_1", 34, 2), ("0:APPSBLENV", 36, 4), ("0:APPSBL", 40, 10),
     ("0:APPSBL_1", 50, 10), ("0:ART", 60, 8), ("0:TRAINING", 68, 4),
     ("bdata", 72, 4), ("crash", 76, 4), ("crash_syslog", 80, 4),
+]
+EXPECTED_V2 = _COMMON + [
     ("rootfs", 84, 248), ("rootfs_1", 332, 248), ("overlay", 580, 266),
     ("modem_image", 846, 1181),
 ]
+EXPECTED_V1 = _COMMON + [
+    ("rootfs", 84, 288), ("rootfs_1", 372, 288), ("overlay", 660, 344),
+]
+LAYOUTS = {"CB0401V2": EXPECTED_V2, "CB0401": EXPECTED_V1}
 
 
 def parse_mibib(data):
@@ -181,15 +189,17 @@ def main():
     # 1. the partition table, checked before anything else
     dump(con, args, "mtd1_0_MIBIB.bin", 4 * BLOCK, 4 * BLOCK)
     table = parse_mibib(open(os.path.join(args.dir, "mtd1_0_MIBIB.bin"), "rb").read())
-    if table != EXPECTED:
+    layout = next((n for n, t in LAYOUTS.items() if table == t), None)
+    if not layout:
         print("UNEXPECTED partition table, stopping:", file=sys.stderr)
         for e in table or []:
             print("  %-14s %5d %5d" % e, file=sys.stderr)
         sys.exit(1)
-    print("partition table as expected")
+    expected = LAYOUTS[layout]
+    print("partition table as expected (%s)" % layout)
 
     # 2. every partition, as nanddump names them
-    for idx, (name, first, count) in enumerate(EXPECTED):
+    for idx, (name, first, count) in enumerate(expected):
         fname = "mtd%d_%s.bin" % (idx, name.replace(":", "_"))
         size = count * BLOCK
         if name == "0:MIBIB":

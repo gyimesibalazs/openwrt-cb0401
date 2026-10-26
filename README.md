@@ -36,6 +36,18 @@ Limits:
 - The WiFi firmware and board files are Xiaomi's signed binaries. They are
   not in the tree: you extract them from your own unit (step 4).
 
+## The original CB0401 (experimental)
+
+The non-V2 CB0401 is supported too, but **experimentally and untested on
+hardware** (built from a full stock NAND dump). It is the same mp03.6-c1
+platform, so the install works the same way; it differs in the flash layout
+(larger system partitions, no `modem_image`, 128 MiB NAND) and in the modem
+(a `17cb:0306` MHI modem instead of the RG520N). The install scripts and
+`sysupgrade` detect either layout automatically. Build its WiFi files from a
+CB0401 unit's own stock with `extract-stock-firmware.sh -m cb0401`. The modem
+is not wired up yet, and the DTS still needs confirming on a real unit (RAM
+size, modem USB side). See the `xiaomi,cb0401` device.
+
 ## How it works, and why a hardware mod is needed
 
 The unit is secure-boot fused: the boot chain only starts kernels signed by
