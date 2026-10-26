@@ -276,5 +276,11 @@ file has to fit in the 96 MiB RAM window at 0x44000000:
     nand write 0x44000000 0x4880000 0x2140000
 
 Then remove the C3 (or at least its wire to the router's RX) so that the
-stock U-Boot can autoboot again. Never write the boot chain (SBL1 ..
-APPSBL_1): a bad write there cannot be repaired without the signing keys.
+stock U-Boot can autoboot again.
+
+Never write the boot chain (SBL1 .. APPSBL_1). The secure boot fuse is blown
+(`is_sec_boot_enabled` at the U-Boot prompt: "secure boot fuse is enabled"),
+and SBL1, QSEE and U-Boot (APPSBL) are all signed with Xiaomi's key
+(`MIWIFI ROOT CA`). SBL1 checks the signature of what it loads, so a patched
+U-Boot will not start. A broken boot chain cannot be repaired in software:
+the backup then has to go back with an external SPI-NAND programmer.
