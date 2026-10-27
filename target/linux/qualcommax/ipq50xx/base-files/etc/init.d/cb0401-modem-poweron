@@ -1,0 +1,17 @@
+#!/bin/sh /etc/rc.common
+# Xiaomi CB0401: pulse the modem PWRKEY (mb_onoff, gpio30) at boot to switch
+# the 5G modem on, like the stock firmware. Holding it high powers the modem
+# off, so it must be a momentary pulse, not a gpio-hog.
+
+START=15
+
+start() {
+	. /lib/functions.sh
+	[ "$(board_name)" = "xiaomi,cb0401" ] || return 0
+
+	led=/sys/class/leds/mb_onoff/brightness
+	[ -w "$led" ] || return 0
+	echo 1 > "$led"
+	sleep 1
+	echo 0 > "$led"
+}
