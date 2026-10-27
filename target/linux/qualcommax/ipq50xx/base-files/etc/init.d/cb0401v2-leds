@@ -1,10 +1,10 @@
 #!/bin/sh /etc/rc.common
-# Xiaomi CB0401V2: 4G / 5G / WiFi front LEDs (see /usr/sbin/cb0401v2-leds)
+# Xiaomi CB0401 / CB0401V2: 4G / 5G / WiFi front LEDs (see /usr/sbin/cb0401v2-leds)
 START=99
 USE_PROCD=1
 
 start_service() {
-	[ "$(board_name)" = xiaomi,cb0401v2 ] || return 0
+	case "$(board_name)" in xiaomi,cb0401|xiaomi,cb0401v2) ;; *) return 0 ;; esac
 
 	procd_open_instance
 	procd_set_param command /usr/sbin/cb0401v2-leds

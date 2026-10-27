@@ -1,10 +1,14 @@
 #!/bin/sh
-# Xiaomi CB0401V2 NFC tag: write a "tap to join WiFi" NDEF record (WiFi Simple
+# Xiaomi CB0401 / CB0401V2 NFC tag: write a "tap to join WiFi" NDEF record (WiFi Simple
 # Config credential, application/vnd.wfa.wsc), like the stock firmware does,
 # optionally followed by a URI record (iOS ignores the WiFi one).
 #
-# The tag is an FM11NT08-class dual interface tag on I2C: 2-byte byte address,
-# 4-byte pages, NDEF TLV area from 0x0010 (stock /sbin/nfc, fm_i2c_update).
+# Two dual interface tags are fitted, both written in 4-byte pages with a
+# 2-byte address (stock /sbin/nfc):
+#   0x57  FM11NT08-class (CB0401V2): byte address, capability container at
+#         0x000c, NDEF TLV area from 0x0010 (fm_i2c_update)
+#   0x54  (CB0401): page address, capability container in page 0, NDEF TLV
+#         area from page 1 (nxp_i2c_update)
 #
 #   cb0401v2-nfc update        write the network from /etc/config/nfc
 #   cb0401v2-nfc clear         write an empty NDEF message
@@ -16,8 +20,6 @@
 #                                          enabled AP with psk/sae or open)
 #                       option url ''     (optional URI record, e.g. for iOS)
 
-NDEF_START=0x10
-
 log() { logger -t cb0401v2-nfc "$*"; echo "$*" >&2; }
 
 find_tag() {
@@ -27,9 +29,14 @@ find_tag() {
 		for addr in 0x57 0x54; do
 			i2ctransfer -y "$bus" w2@$addr 0x00 0x00 r1 >/dev/null 2>&1 || continue
 			BUS=$bus ADDR=$addr
-			[ "$addr" = 0x57 ] && return 0
-			log "NXP tag at $addr is not supported (FM11NT08 only)"
-			return 1
+			if [ "$addr" = 0x57 ]; then
+				CC_ADDR=0x000c CC="0xe1 0x10 0x6d 0x00"
+				NDEF_START=0x0010 STEP=4
+			else
+				CC_ADDR=0x0000 CC="0xe1 0x43 0x80 0x09"
+				NDEF_START=0x0001 STEP=1
+			fi
+			return 0
 		done
 	done
 	log "no NFC tag found on I2C"
@@ -146,16 +153,16 @@ build_message() {
 	ndef_tlv $wsc $uri
 }
 
-# ensure_cc: the capability container (page 3) must announce an NDEF tag or
-# the phone ignores it; write the stock value into a blank one
+# ensure_cc: the capability container must announce an NDEF tag or the
+# phone ignores it; write the stock value into a blank one
 ensure_cc() {
 	local cc
 
-	cc=$(i2ctransfer -y "$BUS" w2@$ADDR 0x00 0x0c r4 2>/dev/null)
+	cc=$(i2ctransfer -y "$BUS" w2@$ADDR $(be16 $CC_ADDR) r4 2>/dev/null)
 	case "$cc" in
 	0xe1*)	;;
 	*)	log "capability container '$cc', writing the stock one"
-		i2ctransfer -y "$BUS" w6@$ADDR 0x00 0x0c 0xe1 0x10 0x6d 0x00 ;;
+		i2ctransfer -y "$BUS" w6@$ADDR $(be16 $CC_ADDR) $CC ;;
 	esac
 }
 
@@ -172,7 +179,7 @@ write_tag() {
 		for try in 1 2 3 4 5; do
 			i2ctransfer -y "$BUS" w6@$ADDR $(be16 $addr) $page 2>/dev/null && break
 		done
-		addr=$((addr + 4))
+		addr=$((addr + STEP))
 	done
 
 	back=$(i2ctransfer -y "$BUS" w2@$ADDR $(be16 $NDEF_START) r$n 2>/dev/null)

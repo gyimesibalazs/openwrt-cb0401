@@ -110,7 +110,7 @@
 
 		/*
 		 * Not a real LED: the modem PWRKEY ("mb_onoff", gpio30), exposed the
-		 * way the stock firmware uses it. cb0401-modem-poweron pulses it high
+		 * way the stock firmware uses it. cb0401v2-modem pulses it high
 		 * for 1 s at boot to switch the modem on; holding it high (hogging it)
 		 * powers the modem off, so it must be a pulse, not a hog.
 		 */
@@ -439,7 +439,7 @@
 	 * Modem lines as on the stock firmware, confirmed on a real unit:
 	 * usb-power and ap2mdm-reset-n held high, sdx-pon held low. gpio30
 	 * (mb_onoff) is a momentary PWRKEY and is pulsed from userspace at boot
-	 * (cb0401-modem-poweron), not hogged.
+	 * (cb0401v2-modem), not hogged.
 	 */
 	usb-power-hog {
 		gpio-hog;

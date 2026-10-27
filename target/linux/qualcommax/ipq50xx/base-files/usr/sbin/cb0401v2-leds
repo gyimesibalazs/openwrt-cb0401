@@ -1,5 +1,5 @@
 #!/bin/sh
-# Xiaomi CB0401V2 front LEDs, same scheme as the stock firmware
+# Xiaomi CB0401 / CB0401V2 front LEDs, same scheme as the stock firmware
 # (/lib/mobile.d/01-signal_led.sh + /etc/config/xqled):
 #   4G   on = LTE connected, good signal; slow blink = weak signal
 #   5G   on = 5G (NSA or SA) connected, good signal; slow blink = weak

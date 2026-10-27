@@ -1,10 +1,10 @@
 #!/bin/sh
-# Xiaomi CB0401V2: 5G modem (Quectel RG520N-EB) on PCIe/MHI, as on stock:
+# Xiaomi CB0401 / CB0401V2: 5G modem (Quectel RG520N-EB) on PCIe/MHI, as on stock:
 # ModemManager (qcom-soc plugin) controls it over QMI on QRTR, data runs on
 # the raw-IP mhi_hwip0 netdev. Needs the modem's data path on PCIe, the stock
 # setting: AT+QCFG="data_interface",1,0.
 . /lib/functions.sh
-[ "$(board_name)" = xiaomi,cb0401v2 ] || exit 0
+case "$(board_name)" in xiaomi,cb0401|xiaomi,cb0401v2) ;; *) exit 0 ;; esac
 
 uci -q batch <<EOT
 set network.wwan=interface
@@ -12,6 +12,12 @@ set network.wwan.proto='modemmanager'
 set network.wwan.device='qcom-soc'
 set network.wwan.apn='online'
 set network.wwan.iptype='ipv4v6'
+EOT
+# the CB0401 also has an ethernet WAN: keep it as the fallback route
+[ "$(board_name)" = xiaomi,cb0401 ] && uci -q batch <<EOT
+set network.wwan.metric='10'
+set network.wan.metric='20'
+set network.wan6.metric='20'
 EOT
 uci commit network
 
