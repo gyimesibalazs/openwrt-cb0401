@@ -56,9 +56,9 @@ works the same way; it differs in the flash layout (larger system
 partitions, no `modem_image`, 128 MiB NAND), in the RAM (1 GB) and in the
 NFC tag's I2C address. A unit has booted the OpenWrt 25.12 RAM image: both
 radios, the ports, the modem (MHI data and its USB AT ports) and the
-partition layout check all came up. Not tried on it yet: the install to the
-NAND, and the modem as WAN (the WAN, LED and NFC scripts are still
-V2-only). The install scripts and `sysupgrade` detect either layout
+partition layout check all came up. The modem WAN, LEDs and NFC tag are
+set up as on the V2 (the ethernet WAN stays as a fallback), but are not
+tried on it yet, nor is the install to the NAND. The install scripts and `sysupgrade` detect either layout
 automatically. Build its WiFi files from a CB0401 unit's own stock with
 `extract-stock-firmware.sh -m cb0401`. See the `xiaomi,cb0401` device.
 
