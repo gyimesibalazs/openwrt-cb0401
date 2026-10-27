@@ -3,9 +3,9 @@
  * Xiaomi CB0401 (the original, non-V2 5G CPE)
  *
  * Board: IPQ5018/AP-MP03.6-C1, 128 MiB SPI-NAND, QCN9074 on PCIe0, a
- * 5G modem (Qualcomm 17cb:0306, MHI over PCIe) on PCIe1. Same reference
- * design as the CB0401V2, so pins, LEDs, buttons and the switch layout are
- * shared; only the flash layout and the modem differ.
+ * 5G modem (the same Quectel RG520N, 17cb:0308, as the V2) on PCIe1. Same
+ * reference design as the CB0401V2, so pins, LEDs, buttons, the switch layout
+ * and the modem are shared; the flash layout differs.
  *
  * EXPERIMENTAL. The hardware here follows a CB0401 owner's OpenWrt DTS that
  * was tested on a real unit (WiFi, both LAN ports and the modem working): fw
@@ -541,9 +541,8 @@
 };
 
 /*
- * PCIe link of the 5G modem (Qualcomm 17cb:0306, MHI over PCIe; the stock
- * firmware exposes it as wwan0 = mhi_0306). Data runs over MHI, unlike the
- * V2 whose RG520N also uses the USB AT ports.
+ * PCIe link of the 5G modem: a Quectel RG520N (17cb:0308) as on the V2,
+ * data over MHI, AT ports over USB (ttyUSB0-3). Confirmed on a unit.
  */
 &pcie1_phy {
 	status = "okay";
