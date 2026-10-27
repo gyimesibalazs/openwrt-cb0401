@@ -1,0 +1,13 @@
+#!/bin/sh
+# Xiaomi CB0401 / CB0401V2: the IPQ5018 radio runs the signed stock single-PD
+# Q6 image, whose 2.4 GHz radio stops completing associations under NSS Wi-Fi
+# offload. Keep it on the host path; the QCN9074 (5 GHz) stays offloaded.
+. /lib/functions.sh
+case "$(board_name)" in
+xiaomi,cb0401|xiaomi,cb0401v2)
+	[ -f /etc/config/nss ] || exit 0
+	uci -q set nss.general.wifi_offload_ahb='0'
+	uci commit nss
+	;;
+esac
+exit 0
