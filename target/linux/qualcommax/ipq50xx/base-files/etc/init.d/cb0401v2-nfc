@@ -1,20 +1,20 @@
 #!/bin/sh /etc/rc.common
-# Xiaomi CB0401V2: keep the NFC "tap to join WiFi" tag in sync with the
+# Xiaomi CB0401 / CB0401V2: keep the NFC "tap to join WiFi" tag in sync with the
 # wireless config (see /usr/sbin/cb0401v2-nfc)
 START=99
 USE_PROCD=1
 
 start_service() {
-	[ "$(board_name)" = xiaomi,cb0401v2 ] || return 0
+	case "$(board_name)" in xiaomi,cb0401|xiaomi,cb0401v2) ;; *) return 0 ;; esac
 	/usr/sbin/cb0401v2-nfc update
 }
 
 reload_service() {
-	[ "$(board_name)" = xiaomi,cb0401v2 ] || return 0
+	case "$(board_name)" in xiaomi,cb0401|xiaomi,cb0401v2) ;; *) return 0 ;; esac
 	/usr/sbin/cb0401v2-nfc update
 }
 
 service_triggers() {
-	[ "$(board_name)" = xiaomi,cb0401v2 ] || return 0
+	case "$(board_name)" in xiaomi,cb0401|xiaomi,cb0401v2) ;; *) return 0 ;; esac
 	procd_add_reload_trigger "wireless" "nfc"
 }

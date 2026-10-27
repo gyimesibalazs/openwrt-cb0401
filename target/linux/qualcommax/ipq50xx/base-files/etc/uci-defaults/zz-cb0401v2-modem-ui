@@ -1,11 +1,11 @@
 #!/bin/sh
-# Xiaomi CB0401V2: point the modem web UI (luci-app-3ginfo-lite,
+# Xiaomi CB0401 / CB0401V2: point the modem web UI (luci-app-3ginfo-lite,
 # luci-app-modemband) at the RG520N AT port and the wwan interface.
 # Runs after luci-app-modemband's set_up_bandz.sh, which seeds set_bands from
 # the modem; on first boot the modem is still powered off, so it stores the
 # error text instead: drop it, the band page reads the modem live.
 . /lib/functions.sh
-[ "$(board_name)" = xiaomi,cb0401v2 ] || exit 0
+case "$(board_name)" in xiaomi,cb0401|xiaomi,cb0401v2) ;; *) exit 0 ;; esac
 
 [ -f /etc/config/3ginfo ] &&
 	uci -q set 3ginfo.@3ginfo[0].device='/dev/ttyUSB2' && uci commit 3ginfo

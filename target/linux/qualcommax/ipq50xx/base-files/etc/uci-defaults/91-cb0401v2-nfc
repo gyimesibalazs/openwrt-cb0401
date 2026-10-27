@@ -1,7 +1,7 @@
 #!/bin/sh
-# Xiaomi CB0401V2: default config of the NFC tag (see /usr/sbin/cb0401v2-nfc)
+# Xiaomi CB0401 / CB0401V2: default config of the NFC tag (see /usr/sbin/cb0401v2-nfc)
 . /lib/functions.sh
-[ "$(board_name)" = xiaomi,cb0401v2 ] || exit 0
+case "$(board_name)" in xiaomi,cb0401|xiaomi,cb0401v2) ;; *) exit 0 ;; esac
 [ -f /etc/config/nfc ] && exit 0
 
 touch /etc/config/nfc

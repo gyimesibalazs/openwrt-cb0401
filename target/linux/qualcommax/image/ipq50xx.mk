@@ -205,11 +205,10 @@ endif
 endef
 TARGET_DEVICES += xiaomi_ax6000
 
-# EXPERIMENTAL, not tested on hardware: the original CB0401 (non-V2). Same
-# mp03.6-c1 reference as the V2, 128 MiB NAND, no modem_image partition, a
-# 17cb:0306 MHI modem. The WiFi firmware/board data comes from the unit's own
-# stock (xiaomi-cb0401-wifi-firmware, git-ignored). The modem is not wired up
-# yet.
+# EXPERIMENTAL: the original CB0401 (non-V2). Same mp03.6-c1 reference and
+# RG520N modem as the V2, 128 MiB NAND, no modem_image partition. The WiFi
+# firmware/board data comes from the unit's own stock
+# (xiaomi-cb0401-wifi-firmware, git-ignored).
 define Device/xiaomi_cb0401
 	$(call Device/FitImage)
 	$(call Device/UbiFit)
@@ -221,6 +220,7 @@ define Device/xiaomi_cb0401
 	PAGESIZE := 2048
 	DEVICE_PACKAGES := kmod-ath11k-pci ath11k-firmware-qcn9074 \
 		xiaomi-cb0401-wifi-firmware \
+		xiaomi-cb0401v2-modem kmod-usb-serial-option \
 		i2c-tools
 endef
 TARGET_DEVICES += xiaomi_cb0401
