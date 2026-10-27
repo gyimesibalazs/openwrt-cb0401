@@ -2,8 +2,12 @@
 > rebased onto kuncy7's [openwrt-nss-edma](https://github.com/kuncy7/openwrt-nss-edma)
 > (`c3po-tag-8021q`, kernel 6.18, upstream stmmac/DSA ethernet, NSS offload;
 > see [README.ipq50xx.md](README.ipq50xx.md)). The aim is NSS acceleration of
-> the wired ports, the 5G modem's raw-IP WAN and the 5 GHz radio. It is not
-> tested yet; the stable port is the `cb0401` branch on OpenWrt 25.12. The
+> the wired ports, the 5G modem's raw-IP WAN and the 5 GHz radio. A CB0401V2
+> runs it from the NAND: the NSS core boots despite secure boot, both
+> ethernet ports and the 5G modem's WAN are NSS accelerated (ECM offloads
+> the modem's raw-IP traffic through the NSS rmnet path), and the 5 GHz radio
+> uses NSS Wi-Fi offload; the 2.4 GHz radio stays on the CPU path. It is still
+> experimental; the stable port is the `cb0401` branch on OpenWrt 25.12. The
 > install procedure below is the same on both.
 
 # OpenWrt on the Xiaomi CB0401V2 (Magenta 5G AX5400 V2)
@@ -39,23 +43,24 @@ updated with plain `sysupgrade`.
 Limits:
 
 - 2.4 GHz takes one AP interface. A second one crashes the WCSS firmware.
-- No NSS offload: routing runs on the CPU (software flow offloading can be
-  turned on in the firewall settings).
+- No NSS offload on the stable `cb0401` branch (this branch has it, see the
+  note at the top).
 - The WiFi firmware and board files are Xiaomi's signed binaries. They are
   not in the tree: you extract them from your own unit (step 4).
 
 ## The original CB0401 (experimental)
 
-The non-V2 CB0401 is supported too, but **experimentally and untested on
-hardware** (built from a full stock NAND dump). It is the same mp03.6-c1
-platform, so the install works the same way; it differs in the flash layout
-(larger system partitions, no `modem_image`, 128 MiB NAND) and in the modem
-(a `17cb:0306` MHI modem instead of the RG520N). The install scripts and
-`sysupgrade` detect either layout automatically. Build its WiFi files from a
-CB0401 unit's own stock with `extract-stock-firmware.sh -m cb0401`. The modem
-is not wired up yet, and the DTS still needs confirming on a real unit (the
-reserved-memory map on a 1 GB unit, the modem USB side). See the
-`xiaomi,cb0401` device.
+The non-V2 CB0401 is supported too, **experimentally**. It is the same
+mp03.6-c1 platform with the same RG520N modem (`17cb:0308`), so the install
+works the same way; it differs in the flash layout (larger system
+partitions, no `modem_image`, 128 MiB NAND), in the RAM (1 GB) and in the
+NFC tag's I2C address. A unit has booted the OpenWrt 25.12 RAM image: both
+radios, the ports, the modem (MHI data and its USB AT ports) and the
+partition layout check all came up. Not tried on it yet: the install to the
+NAND, and the modem as WAN (the WAN, LED and NFC scripts are still
+V2-only). The install scripts and `sysupgrade` detect either layout
+automatically. Build its WiFi files from a CB0401 unit's own stock with
+`extract-stock-firmware.sh -m cb0401`. See the `xiaomi,cb0401` device.
 
 ## How it works, and why a hardware mod is needed
 
