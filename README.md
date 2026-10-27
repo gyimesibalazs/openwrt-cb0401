@@ -32,22 +32,25 @@ Limits:
 
 - 2.4 GHz takes one AP interface. A second one crashes the WCSS firmware.
 - No NSS offload: routing runs on the CPU (software flow offloading can be
-  turned on in the firewall settings).
+  turned on in the firewall settings). NSS offload is on the experimental
+  [`cb0401-nss`](https://github.com/gyimesibalazs/openwrt-cb0401/tree/cb0401-nss)
+  branch.
 - The WiFi firmware and board files are Xiaomi's signed binaries. They are
   not in the tree: you extract them from your own unit (step 4).
 
 ## The original CB0401 (experimental)
 
-The non-V2 CB0401 is supported too, but **experimentally and untested on
-hardware** (built from a full stock NAND dump). It is the same mp03.6-c1
-platform, so the install works the same way; it differs in the flash layout
-(larger system partitions, no `modem_image`, 128 MiB NAND) and in the modem
-(a `17cb:0306` MHI modem instead of the RG520N). The install scripts and
-`sysupgrade` detect either layout automatically. Build its WiFi files from a
-CB0401 unit's own stock with `extract-stock-firmware.sh -m cb0401`. The modem
-is not wired up yet, and the DTS still needs confirming on a real unit (the
-reserved-memory map on a 1 GB unit, the modem USB side). See the
-`xiaomi,cb0401` device.
+The non-V2 CB0401 is supported too, **experimentally**. It is the same
+mp03.6-c1 platform with the same RG520N modem (`17cb:0308`), so the install
+works the same way; it differs in the flash layout (larger system
+partitions, no `modem_image`, 128 MiB NAND), in the RAM (1 GB) and in the
+NFC tag's I2C address. A unit has booted the OpenWrt 25.12 RAM image: both
+radios, the ports, the modem (MHI data and its USB AT ports) and the
+partition layout check all came up. Not tried on it yet: the install to the
+NAND, and the modem as WAN (the WAN, LED and NFC scripts are still
+V2-only). The install scripts and `sysupgrade` detect either layout
+automatically. Build its WiFi files from a CB0401 unit's own stock with
+`extract-stock-firmware.sh -m cb0401`. See the `xiaomi,cb0401` device.
 
 ## How it works, and why a hardware mod is needed
 
