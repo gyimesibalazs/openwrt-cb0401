@@ -1,0 +1,4 @@
+#!/bin/sh
+. /lib/functions.sh
+[ "$(board_name)" = "xiaomi,cb0401" ] && /etc/init.d/cb0401-modem-poweron enable
+exit 0

@@ -394,6 +394,7 @@ platform_check_image() {
 		fi
 		nand_do_platform_check "$(board_name)" "$1"
 		;;
+	xiaomi,cb0401|\
 	xiaomi,cb0401v2)
 		# the fixed "ubi" partition is only right on the stock layout
 		cb0401-check-layout || return 1
@@ -568,6 +569,7 @@ platform_do_upgrade() {
 		remove_oem_ubi_volume wifi_fw
 		nand_do_upgrade "$1"
 		;;
+	xiaomi,cb0401|\
 	xiaomi,cb0401v2)
 		# one UBI over the stock rootfs, rootfs_1 and overlay partitions
 		CI_UBIPART="ubi"

@@ -230,6 +230,27 @@ define Device/ruijie_rg-ma3063
 endef
 TARGET_DEVICES += ruijie_rg-ma3063
 
+# EXPERIMENTAL, not tested on hardware: the original CB0401 (non-V2). Same
+# mp03.6-c1 reference as the V2, 128 MiB NAND, no modem_image partition, a
+# 17cb:0306 MHI modem. The WiFi firmware/board data comes from the unit's own
+# stock (xiaomi-cb0401-wifi-firmware, git-ignored). The modem is not wired up
+# yet.
+define Device/xiaomi_cb0401
+	$(call Device/FitImage)
+	$(call Device/UbiFit)
+	DEVICE_VENDOR := Xiaomi
+	DEVICE_MODEL := CB0401
+	DEVICE_DTS_CONFIG := config@mp03.6-c1
+	SOC := ipq5018
+	BLOCKSIZE := 128k
+	PAGESIZE := 2048
+	NAND_SIZE := 128m
+	DEVICE_PACKAGES := kmod-ath11k-pci ath11k-firmware-qcn9074 \
+		xiaomi-cb0401-wifi-firmware \
+		i2c-tools
+endef
+TARGET_DEVICES += xiaomi_cb0401
+
 define Device/xiaomi_cb0401v2
 	$(call Device/FitImage)
 	$(call Device/UbiFit)
