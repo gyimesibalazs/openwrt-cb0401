@@ -33,3 +33,5 @@ CONFIG_ATH11K_MEM_PROFILE_512M=y
 CONFIG_NSS_MEM_PROFILE_MEDIUM=y
 CONFIG_PACKAGE_ip-full=y
 CONFIG_PACKAGE_iperf3=y
+# WDA data-format checks of the modem over QRTR (qmicli)
+CONFIG_PACKAGE_qmi-utils=y

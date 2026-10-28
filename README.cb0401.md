@@ -5,8 +5,10 @@
 > the wired ports, the 5G modem's raw-IP WAN and the 5 GHz radio. A CB0401V2
 > runs it from the NAND: the NSS core boots despite secure boot, both
 > ethernet ports and the 5G modem's WAN are NSS accelerated (ECM offloads
-> the modem's raw-IP traffic through the NSS rmnet path), and both radios use
-> NSS Wi-Fi offload. The 2.4 GHz radio runs the multi-PD WLAN.HK.2.7.0.1
+> the modem's traffic through the NSS rmnet path), and both radios use
+> NSS Wi-Fi offload. The modem WAN runs over QMAP with a zero-copy rmnet
+> deaggregation (see "The modem data path" below): measured ~45 % less CPU
+> per GB than raw-IP, and the modem's receive work sits on the second core. The 2.4 GHz radio runs the multi-PD WLAN.HK.2.7.0.1
 > image instead of the stock 2.6 one: under NSS it completes associations and
 > takes more than one AP. It is still
 > experimental; the stable port is the `cb0401` branch on OpenWrt 25.12. The
@@ -28,9 +30,9 @@ updated with plain `sysupgrade`.
 ## What works
 
 - **5G/4G modem**: RG520N-EB on PCIe (MHI), managed by ModemManager. It is
-  the WAN by default (APN `online`, IPv4 + IPv6) and has LuCI pages for cell
-  and signal info, carrier aggregation and band locking (3ginfo-lite and
-  modemband).
+  the WAN by default (APN `online`, IPv4 + IPv6, QMAP) and has LuCI pages
+  for cell and signal info, carrier aggregation and band locking
+  (3ginfo-lite and modemband).
 - **lan1 and lan2**, both gigabit (lan2 is the SGMII port of the QCA8337
   switch).
 - **WiFi**: 5 GHz on the QCN9074 and 2.4 GHz on the IPQ5018 (ath11k).
@@ -63,6 +65,38 @@ set up as on the V2 (the ethernet WAN stays as a fallback), but are not
 tried on it yet, nor is the install to the NAND. The install scripts and `sysupgrade` detect either layout
 automatically. Build its WiFi files from a CB0401 unit's own stock with
 `extract-stock-firmware.sh -m cb0401`. See the `xiaomi,cb0401` device.
+
+## The modem data path
+
+The modem's downlink is where this SoC spends its CPU, so the branch
+carries the stock firmware's recipe on upstream drivers:
+
+- **QMAP** (`network.wwan.multiplex='required'`, set by a uci-default): the
+  modem aggregates up to 20 packets / 15360 bytes into one 16 KiB MHI
+  buffer (the stock MRU and WDA settings; ModemManager asks for them on
+  `mhi_net`, patch 0104), and `rmnet` splits the frame **by reference**
+  (kernel patch 0918: a small linear head for the headers plus one frag
+  into the frame's page, instead of a copy per packet; `mhi_net` allocates
+  the buffers as pages for that, patch 0915). The NSS takes the packets as
+  scatter-gather chains; GRO-merged segments stay on the host
+  (`package/nss/qca-nss-drv` patch 0150: without it every host-bound TCP
+  flow saw checksum errors).
+- **Interrupts**: the modem's MHI interrupts are moved to the last CPU at
+  boot (`cb0401v2-pcie-modem`); otherwise all of its receive work lands on
+  CPU0 next to the NSS and Wi-Fi work.
+
+Measured on a V2 with a phone speedtest over 5 GHz (CPU seconds per GB of
+forwarded traffic, the number that does not depend on the cell's mood):
+raw-IP 21.0 s/GB with everything on CPU0 (~54 % of it at 205 Mbit/s),
+19.5 s/GB with the interrupts on CPU1, **11.4 s/GB over QMAP** with the
+busiest core at 19 % at 175 Mbit/s. Projected from that, the modem path
+runs out of CPU around 900 Mbit/s, about where the stock firmware is
+reported to top out.
+
+To go back to raw-IP: `uci delete network.wwan.multiplex; uci commit
+network; reboot` (the modem keeps its data format until it is reset, so a
+plain `ifup` is not enough). `/sys/module/rmnet/parameters/deagg_zerocopy`
+switches the deaggregation back to copying at run time, for comparisons.
 
 ## How it works, and why a hardware mod is needed
 
