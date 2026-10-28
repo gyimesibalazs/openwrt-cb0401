@@ -245,7 +245,7 @@ define Device/xiaomi_cb0401
 	PAGESIZE := 2048
 	NAND_SIZE := 128m
 	DEVICE_PACKAGES := kmod-ath11k-pci ath11k-firmware-qcn9074 \
-		xiaomi-cb0401-wifi-firmware \
+		ath11k-firmware-ipq5018-qcn6122 xiaomi-cb0401-wifi-firmware \
 		xiaomi-cb0401v2-modem kmod-usb-serial-option \
 		i2c-tools
 endef
@@ -265,7 +265,7 @@ define Device/xiaomi_cb0401v2
 	PAGESIZE := 2048
 	NAND_SIZE := 256m
 	DEVICE_PACKAGES := kmod-ath11k-pci ath11k-firmware-qcn9074 \
-		xiaomi-cb0401v2-wifi-firmware \
+		ath11k-firmware-ipq5018-qcn6122 xiaomi-cb0401v2-wifi-firmware \
 		xiaomi-cb0401v2-modem kmod-usb-serial-option \
 		i2c-tools
 endef

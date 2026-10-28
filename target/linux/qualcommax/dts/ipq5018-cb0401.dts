@@ -16,6 +16,11 @@
  * pinned here, so if a unit shows stock engines clobbering RAM, its
  * /proc/iomem no-map regions would need adding.
  *
+ * The IPQ5018 radio runs the multi-PD WLAN.HK.2.7.0.1 image with only user
+ * PD 1 started (ipq5018-qcn6122.dtsi), as on the CB0401V2; it has to run
+ * under NSS Wi-Fi offload (on the host path the first client frames crash
+ * ath11k).
+ *
  * The unit is secure-boot fused: it runs OpenWrt through U-Boot bootm. The
  * merged "ubi" partition (stock rootfs + rootfs_1 + overlay) and the ESP32-C3
  * rescue console are this port's own choice, for a full-space, sysupgradeable
@@ -25,7 +30,7 @@
 #include "ipq5018.dtsi"
 #include "ipq5018-ess.dtsi"
 #include "ipq5018-nss.dtsi"
-#include "ipq5018-q6-fixed-mem.dtsi"
+#include "ipq5018-qcn6122.dtsi"
 
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/input.h>
@@ -560,11 +565,6 @@
 	qcom,select-utmi-as-pipe-clk;
 
 	status = "okay";
-};
-
-&q6v5_wcss {
-	firmware-name = "ath11k/IPQ5018/hw1.0/q6_fw.mdt",
-			"ath11k/IPQ5018/hw1.0/m3_fw.mdt";
 };
 
 &wifi {
