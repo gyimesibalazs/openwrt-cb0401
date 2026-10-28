@@ -1,0 +1,18 @@
+#!/bin/sh
+# Xiaomi CB0401 / CB0401V2: no GRO on the modem's QMAP links. Their traffic is
+# forwarded by the NSS, which takes the packets one by one from the raw-IP
+# bind handler; a segment GRO has merged can only go through the host stack
+# (the handler leaves it there, see package/nss/qca-nss-drv patch 0150), so
+# with GRO on most of the downlink would be forwarded in software. Measured
+# forwarded cost: 31.5 CPU-s/GB with GRO, 11-17 without. ModemManager creates
+# a link per connection, so this runs on each one.
+[ "$ACTION" = add ] || exit 0
+case "$DEVICENAME" in
+qmapmux*) ;;
+*) exit 0 ;;
+esac
+. /lib/functions.sh
+case "$(board_name)" in
+xiaomi,cb0401|xiaomi,cb0401v2) ethtool -K "$DEVICENAME" gro off >/dev/null 2>&1 ;;
+esac
+exit 0

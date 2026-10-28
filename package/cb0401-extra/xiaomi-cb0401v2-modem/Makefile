@@ -16,7 +16,7 @@ define Package/xiaomi-cb0401v2-modem
   CATEGORY:=Network
   TITLE:=Xiaomi CB0401V2 PCIe 5G modem support
   DEPENDS:=@TARGET_qualcommax_ipq50xx +modemmanager +kmod-mhi-pci-generic \
-	+kmod-mhi-net +kmod-qrtr-mhi +kmod-rmnet
+	+kmod-mhi-net +kmod-qrtr-mhi +kmod-rmnet +ethtool
   PKGARCH:=all
 endef
 

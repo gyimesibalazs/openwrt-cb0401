@@ -78,9 +78,12 @@ carries the stock firmware's recipe on upstream drivers:
   (kernel patch 0918: a small linear head for the headers plus one frag
   into the frame's page, instead of a copy per packet; `mhi_net` allocates
   the buffers as pages for that, patch 0915). The NSS takes the packets as
-  scatter-gather chains; GRO-merged segments stay on the host
-  (`package/nss/qca-nss-drv` patch 0150: without it every host-bound TCP
-  flow saw checksum errors).
+  scatter-gather chains. GRO is turned off on the QMAP links (a hotplug
+  script): a segment GRO merges can only be forwarded by the host (the NSS
+  bind handler leaves it there, `package/nss/qca-nss-drv` patch 0150, as
+  the firmware returned such segments without their checksum state), and
+  with GRO on most of the downlink went that way, 31.5 CPU-s/GB instead of
+  15.
 - **Interrupts**: the modem's MHI interrupts are moved to the last CPU at
   boot (`cb0401v2-pcie-modem`); otherwise all of its receive work lands on
   CPU0 next to the NSS and Wi-Fi work.
