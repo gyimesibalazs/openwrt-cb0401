@@ -1,0 +1,97 @@
+From: Steve Meek <stevemeek82@gmail.com>
+Subject: [PATCH] nss_rmnet_rx: unframe accelerated raw-IP egress
+
+The firmware hands an accelerated packet to the transmit callback of the
+node pair with the link-layer frame the pair works on (zero addresses,
+IP ethertype) still in front of it. nss_rmnet_rx_bind_xmit() queued it
+on the raw-IP device as it was, so the modem received fourteen bytes of
+frame ahead of every IP header and dropped the packet. On a forwarded
+TCP flow these are the ACKs from the LAN: the download stops after one
+window as soon as ECM accelerates the flow. Strip the frame and set the
+protocol from it, or from the IP version field, before queueing.
+
+When the receive handler cannot hand a packet to the firmware (redirect
+off, a full queue) it passed the packet up still marked as an 802.3
+frame, which no protocol handler takes, so every received packet was
+dropped. Restore the protocol the packet arrived with.
+
+Signed-off-by: Steve Meek <stevemeek82@gmail.com>
+---
+--- a/nss_rmnet_rx.c
++++ b/nss_rmnet_rx.c
+@@ -827,6 +827,44 @@
+  */
+ static void nss_rmnet_rx_bind_xmit(struct net_device *dev, struct sk_buff *skb)
+ {
++	struct ethhdr *eth;
++
++	/*
++	 * The firmware hands an accelerated packet over with the link-layer
++	 * frame the node pair works on: zero addresses and the IP ethertype.
++	 * A raw-IP device sends the IP packet alone, and the modem drops a
++	 * packet that carries the frame, so take it off. An IP header never
++	 * starts with a zero byte, so a frame is told apart from a bare
++	 * packet by its zero destination and source.
++	 */
++	if (skb->len >= ETH_HLEN + sizeof(struct iphdr)) {
++		eth = (struct ethhdr *)skb->data;
++		if ((eth->h_proto == htons(ETH_P_IP) || eth->h_proto == htons(ETH_P_IPV6))
++				&& is_zero_ether_addr(eth->h_dest)
++				&& is_zero_ether_addr(eth->h_source)) {
++			skb->protocol = eth->h_proto;
++			skb_pull(skb, ETH_HLEN);
++		}
++	}
++
++	if (!skb->protocol || skb->protocol == htons(ETH_P_802_3)) {
++		switch (skb->data[0] & 0xf0) {
++		case 0x40:
++			skb->protocol = htons(ETH_P_IP);
++			break;
++
++		case 0x60:
++			skb->protocol = htons(ETH_P_IPV6);
++			break;
++
++		default:
++			dev_kfree_skb_any(skb);
++			return;
++		}
++	}
++
++	skb_reset_mac_header(skb);
++	skb_reset_network_header(skb);
+ 	skb->dev = dev;
+ 	dev_queue_xmit(skb);
+ }
+@@ -904,7 +942,7 @@
+ 	struct sk_buff *skb = *pskb;
+ 	struct nss_rmnet_rx_bind *bind;
+ 	struct ethhdr *eth;
+-	__be16 proto;
++	__be16 proto, orig_proto;
+ 
+ 	if (__this_cpu_read(nss_rmnet_rx_reinject)) {
+ 		return RX_HANDLER_PASS;
+@@ -942,6 +980,7 @@
+ 		return RX_HANDLER_PASS;
+ 	}
+ 
++	orig_proto = skb->protocol;
+ 	eth = skb_push(skb, ETH_HLEN);
+ 	eth_zero_addr(eth->h_dest);
+ 	eth_zero_addr(eth->h_source);
+@@ -953,7 +992,13 @@
+ 	 * nothing it could not enqueue.
+ 	 */
+ 	if (nss_rmnet_rx_tx_buf(bind->handle, skb) != NSS_TX_SUCCESS) {
++		/*
++		 * Hand the packet back to the stack as it came in: left as an
++		 * 802.3 frame, it finds no protocol handler and is dropped.
++		 * That is every packet whenever redirect is off.
++		 */
+ 		skb_pull(skb, ETH_HLEN);
++		skb->protocol = orig_proto;
+ 		return RX_HANDLER_PASS;
+ 	}
+ 

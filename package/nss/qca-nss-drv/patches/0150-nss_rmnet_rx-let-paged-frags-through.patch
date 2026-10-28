@@ -1,0 +1,42 @@
+From: Balázs Gyimesi <gyimesi.balazs@gmail.com>
+Subject: [PATCH] nss_rmnet_rx: let paged frags through, leave GRO segments to the stack
+
+The bind handler linearized every non-linear packet before framing it. A
+frag list has to be flattened, since the firmware cannot hand it back, but
+paged frags are what a zero-copy rmnet deaggregation produces and what
+nss_core_send_buffer() already sends as a scatter-gather chain; linearize
+only the former.
+
+A device that delivers through GRO (rmnet) also hands the handler merged
+segments. The firmware returns one it does not accelerate as a single
+packet whose checksum state is gone, and TCP then verifies a checksum over
+the merged payload and drops it: TcpInCsumErrors on every host-bound flow
+through a QMAP link. Leave merged segments to the stack; a flow that is
+accelerated never comes back this way.
+---
+--- a/nss_rmnet_rx.c
++++ b/nss_rmnet_rx.c
+@@ -972,7 +972,22 @@
+ 	 * zero: the source interface comes from the node pair and any
+ 	 * forwarding decision from the rule.
+ 	 */
+-	if (skb_is_nonlinear(skb) && skb_linearize(skb)) {
++	/*
++	 * A segment GRO merged: the firmware would return it as one packet
++	 * without its checksum state, and TCP would verify the checksum over
++	 * the merged payload. The stack handles it; an accelerated flow never
++	 * comes back this way.
++	 */
++	if (skb_is_gso(skb)) {
++		return RX_HANDLER_PASS;
++	}
++
++	/*
++	 * A frag list the firmware could not hand back, so it is flattened;
++	 * paged frags go down as a scatter-gather chain when the device
++	 * advertises SG, and nss_core linearizes them otherwise.
++	 */
++	if (skb_has_frag_list(skb) && skb_linearize(skb)) {
+ 		return RX_HANDLER_PASS;
+ 	}
+ 

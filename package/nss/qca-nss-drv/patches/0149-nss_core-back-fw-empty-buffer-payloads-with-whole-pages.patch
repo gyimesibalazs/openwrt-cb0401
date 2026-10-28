@@ -1,0 +1,81 @@
+From: fanha99 <fanha99@hotmail.com>
+Subject: [PATCH] nss_core: back firmware empty-buffer payloads with whole pages
+
+The empty-buffer payloads come from kmalloc-4096 since "back firmware
+empty-buffer payloads with kmalloc". That cache uses order-3 slabs of
+eight objects, and a slab is only given back once all eight objects are
+free. The firmware returns payloads in no particular order, so after
+load the pool leaves many slabs partly used: on a 256MB IPQ5018 (Xiaomi
+CR8806, 5GHz Wi-Fi offload) four iperf3 runs left 396 partial
+kmalloc-4k slabs holding 2168 objects, ~4MB of empty objects that no
+one could use. Every new slab also needs an order-3 block, which a
+fragmented 256MB board does not always have in atomic context.
+
+Give each payload a page of its own and build the skb around it. The
+payload and its skb_shared_info fit in one page for every standard MRU
+(2368 bytes with the 1984-byte buffer), so the cost per payload does
+not change, and the page goes back to the page allocator as soon as
+the skb is freed. Payloads that do not fit in a page (jumbo MRU) keep
+using kmalloc.
+
+Signed-off-by: fanha99 <fanha99@hotmail.com>
+---
+--- a/nss_core.c
++++ b/nss_core.c
+@@ -2094,6 +2094,40 @@
+ }
+ 
+ /*
++ * nss_core_alloc_empty_buffer()
++ *	Allocate one payload for the firmware's empty-buffer pool.
++ *
++ * The firmware keeps these payloads for an unbounded time and hands them
++ * back in no particular order. A kmalloc-4096 object lives in an order-3
++ * slab of eight, and the slab is only released once all eight are free, so
++ * the pool's churn leaves partly used slabs behind (~1000 empty objects,
++ * ~4MB, on a 256MB IPQ5018 after a few iperf3 runs), and every new slab
++ * needs an order-3 block. A page of its own goes back to the page
++ * allocator the moment the skb is freed. Payloads that do not fit in a
++ * page (jumbo MRU) keep using kmalloc.
++ */
++static struct sk_buff *nss_core_alloc_empty_buffer(uint16_t payload_len)
++{
++	struct sk_buff *nbuf;
++	struct page *page;
++
++	if (unlikely(payload_len > SKB_WITH_OVERHEAD(PAGE_SIZE)))
++		return alloc_skb(payload_len, GFP_ATOMIC);
++
++	page = alloc_page(GFP_ATOMIC | __GFP_NOWARN);
++	if (unlikely(!page))
++		return NULL;
++
++	nbuf = build_skb(page_address(page), PAGE_SIZE);
++	if (unlikely(!nbuf)) {
++		__free_page(page);
++		return NULL;
++	}
++
++	return nbuf;
++}
++
++/*
+  * nss_core_alloc_max_avail_size_buffers()
+  *	Allocate maximum available sized buffers.
+  */
+@@ -2121,11 +2155,11 @@
+ 		 * (dev_alloc_skb): a long-held ~2KB payload pins its whole
+ 		 * 32KB frag chunk once the neighbouring traffic buffers are
+ 		 * freed, which measured as ~5x RAM amplification on a 512MB
+-		 * IPQ8074 (~200MB pinned for ~35MB of payloads). alloc_skb()
+-		 * backs each payload with its own kmalloc object instead,
+-		 * which is returned in full the moment the skb is freed.
++		 * IPQ8074 (~200MB pinned for ~35MB of payloads). Each payload
++		 * gets memory of its own instead, which is returned in full
++		 * the moment the skb is freed.
+ 		 */
+-		struct sk_buff *nbuf = alloc_skb(payload_len, GFP_ATOMIC);
++		struct sk_buff *nbuf = nss_core_alloc_empty_buffer(payload_len);
+ 		if (unlikely(!nbuf)) {
+ 			/*
+ 			 * ERR:
