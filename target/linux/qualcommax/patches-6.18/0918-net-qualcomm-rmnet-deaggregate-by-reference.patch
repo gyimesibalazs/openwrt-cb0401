@@ -9,6 +9,10 @@ checksum and IP/TCP headers) plus one frag referencing the frame's page,
 and keep copying otherwise (cloned or kmalloc'd frames, the MAPv4 checksum
 trailer that is read at the tail). The padding is then trimmed with
 pskb_trim(), as a referenced packet is not linear.
+The virtual device also enables NETIF_F_SG in its features (it only
+advertised it in hw_features): the packets it delivers are paged, and a
+consumer that checks the device's features before taking non-linear
+packets, such as an offload engine, would otherwise linearize each one.
 ---
 --- a/drivers/net/ethernet/qualcomm/rmnet/rmnet_map_data.c
 +++ b/drivers/net/ethernet/qualcomm/rmnet/rmnet_map_data.c
@@ -73,4 +77,18 @@ pskb_trim(), as a referenced packet is not linear.
 +	pskb_trim(skb, len);
  	rmnet_deliver_skb(skb);
  	return;
+ 
+--- a/drivers/net/ethernet/qualcomm/rmnet/rmnet_vnd.c
++++ b/drivers/net/ethernet/qualcomm/rmnet/rmnet_vnd.c
+@@ -314,6 +314,11 @@
+ 	rmnet_dev->hw_features = NETIF_F_RXCSUM;
+ 	rmnet_dev->hw_features |= NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM;
+ 	rmnet_dev->hw_features |= NETIF_F_SG;
++	/* Deaggregation by reference delivers paged packets; let a consumer
++	 * that checks the device's features (an offload engine) take them as
++	 * they are instead of linearizing each one.
++	 */
++	rmnet_dev->features |= NETIF_F_SG;
+ 
+ 	priv->real_dev = real_dev;
  
