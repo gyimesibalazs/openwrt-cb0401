@@ -18,7 +18,7 @@ without autoqueue.
 ---
 --- a/drivers/bus/mhi/host/pci_generic.c
 +++ b/drivers/bus/mhi/host/pci_generic.c
-@@ -527,6 +527,49 @@
+@@ -527,6 +527,50 @@
  	.sideband_wake = true,
  };
  
@@ -62,13 +62,14 @@ without autoqueue.
 +	.config = &modem_quectel_rg520n_xiaomi_config,
 +	.bar_num = MHI_PCI_DEFAULT_BAR_NUM,
 +	.dma_data_width = 32,
++	.mru_default = 16384,
 +	.sideband_wake = false,
 +};
 +
  static const struct mhi_channel_config mhi_foxconn_sdx55_channels[] = {
  	MHI_CHANNEL_CONFIG_UL(0, "LOOPBACK", 32, 0),
  	MHI_CHANNEL_CONFIG_DL(1, "LOOPBACK", 32, 0),
-@@ -982,6 +1025,9 @@
+@@ -982,6 +1026,9 @@
  	/* Foxconn T99W696, all variants */
  	{ PCI_DEVICE_SUB(PCI_VENDOR_ID_QCOM, 0x0308, PCI_VENDOR_ID_FOXCONN, PCI_ANY_ID),
  		.driver_data = (kernel_ulong_t) &mhi_foxconn_t99w696_info },

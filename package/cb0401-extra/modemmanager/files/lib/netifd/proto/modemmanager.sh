@@ -276,6 +276,7 @@ proto_modemmanager_init_config() {
 	proto_config_add_string preferredmode
 	proto_config_add_string pincode
 	proto_config_add_string iptype
+	proto_config_add_string multiplex
 	proto_config_add_boolean sourcefilter
 	proto_config_add_string plmn
 	proto_config_add_int signalrate
@@ -587,7 +588,7 @@ proto_modemmanager_setup() {
 
 	json_get_vars device apn allowedauth username password
 	json_get_vars pincode iptype sourcefilter plmn metric signalrate allow_roaming
-	json_get_vars allowedmode preferredmode force_connection
+	json_get_vars allowedmode preferredmode force_connection multiplex
 
 	json_get_vars init_epsbearer
 	json_get_vars init_iptype init_allowedauth
@@ -723,6 +724,7 @@ proto_modemmanager_setup() {
 	append_param "apn=${apn}"
 	append_param "allow-roaming=${allow_roaming}"
 	append_param "${iptype:+ip-type=${iptype}}"
+	append_param "${multiplex:+multiplex=${multiplex}}"
 	append_param "${plmn:+operator-id=${plmn}}"
 	append_param "${cliauth:+allowed-auth=${cliauth}}"
 	append_param "${username:+user=${username}}"

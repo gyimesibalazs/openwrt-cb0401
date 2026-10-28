@@ -1,0 +1,66 @@
+From: Balázs Gyimesi <gyimesi.balazs@gmail.com>
+Subject: [PATCH] net: mhi_net: page backed RX buffers
+
+Allocate the RX buffers as pages with build_skb() instead of
+netdev_alloc_skb(), which falls back to kmalloc above a page: a 16 KiB
+buffer holding an aggregated QMAP frame is then head_frag memory, so the
+deaggregating consumer (rmnet) can hand out the packets in it by page
+reference instead of copying each one. Each buffer gets pages of its own
+rather than a slice of the shared page-frag cache, since it is a DMA
+target.
+---
+--- a/drivers/net/mhi_net.c
++++ b/drivers/net/mhi_net.c
+@@ -265,6 +265,43 @@
+ 		netif_wake_queue(ndev);
+ }
+ 
++/* headroom of an RX buffer, a whole DMA cache line */
++#define MHI_NET_RX_PAD		ARCH_DMA_MINALIGN
++
++/* A page backed buffer (head_frag), so that a consumer of an aggregated
++ * frame (rmnet deaggregation) can reference the packets in it instead of
++ * copying them out; netdev_alloc_skb() would use kmalloc above a page. The
++ * buffer gets pages of its own rather than a slice of the shared page-frag
++ * cache: it is a DMA target, and the cache would hand the rest of its page
++ * to allocations the CPU is writing while the device fills ours.
++ */
++static struct sk_buff *mhi_net_alloc_rx_skb(struct net_device *ndev,
++					    unsigned int size)
++{
++	unsigned int truesize, order;
++	struct sk_buff *skb;
++	struct page *page;
++	void *data;
++
++	truesize = ALIGN(MHI_NET_RX_PAD + size, ARCH_DMA_MINALIGN) +
++		   SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
++	order = get_order(truesize);
++	page = alloc_pages(GFP_KERNEL | __GFP_COMP | __GFP_NOWARN, order);
++	if (unlikely(!page))
++		return NULL;
++
++	data = page_address(page);
++	skb = build_skb(data, PAGE_SIZE << order);
++	if (unlikely(!skb)) {
++		__free_pages(page, order);
++		return NULL;
++	}
++
++	skb_reserve(skb, MHI_NET_RX_PAD);
++	skb->dev = ndev;
++	return skb;
++}
++
+ static void mhi_net_rx_refill_work(struct work_struct *work)
+ {
+ 	struct mhi_net_dev *mhi_netdev = container_of(work, struct mhi_net_dev,
+@@ -278,7 +315,7 @@
+ 	size = mhi_netdev->mru ? mhi_netdev->mru : READ_ONCE(ndev->mtu);
+ 
+ 	while (!mhi_queue_is_full(mdev, DMA_FROM_DEVICE)) {
+-		skb = netdev_alloc_skb(ndev, size);
++		skb = mhi_net_alloc_rx_skb(ndev, size);
+ 		if (unlikely(!skb))
+ 			break;
+ 

@@ -1,0 +1,16 @@
+#!/bin/sh
+# Xiaomi CB0401 / CB0401V2: run the modem WAN over QMAP (rmnet multiplexing,
+# downlink aggregation) as the stock firmware does. Measured ~45 % less CPU
+# per GB than raw-IP with the by-reference rmnet deaggregation. Only added
+# when unset, so a user's choice (delete the option for raw-IP, then
+# reboot: the modem keeps its data format until reset) survives upgrades.
+. /lib/functions.sh
+case "$(board_name)" in
+xiaomi,cb0401|xiaomi,cb0401v2)
+	[ -n "$(uci -q get network.wwan.multiplex)" ] && exit 0
+	uci -q get network.wwan >/dev/null || exit 0
+	uci set network.wwan.multiplex='required'
+	uci commit network
+	;;
+esac
+exit 0

@@ -7,7 +7,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=xiaomi-cb0401v2-modem
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -16,7 +16,7 @@ define Package/xiaomi-cb0401v2-modem
   CATEGORY:=Network
   TITLE:=Xiaomi CB0401V2 PCIe 5G modem support
   DEPENDS:=@TARGET_qualcommax_ipq50xx +modemmanager +kmod-mhi-pci-generic \
-	+kmod-mhi-net +kmod-qrtr-mhi
+	+kmod-mhi-net +kmod-qrtr-mhi +kmod-rmnet
   PKGARCH:=all
 endef
 

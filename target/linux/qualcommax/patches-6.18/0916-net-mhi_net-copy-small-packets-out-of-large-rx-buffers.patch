@@ -1,0 +1,42 @@
+From: Balázs Gyimesi <gyimesi.balazs@gmail.com>
+Subject: [PATCH] net: mhi_net: copy small packets out of large RX buffers
+
+With a large MRU (a modem sending aggregated QMAP frames, or ModemManager
+raising the MTU to 16 KiB in multiplex mode) every RX buffer is 16 KiB,
+and a plain 1.5 kB packet received into it carries a 16 KiB truesize. A
+TCP socket on the host is charged that for each packet, its receive
+window collapses, and a download on the router itself drops from
+~100 Mbit/s to ~7 Mbit/s while forwarded traffic is unaffected. Copy a
+small packet into a right-sized skb; aggregated frames stay as they are.
+---
+--- a/drivers/net/mhi_net.c
++++ b/drivers/net/mhi_net.c
+@@ -13,6 +13,7 @@
+ #include <linux/u64_stats_sync.h>
+ 
+ #define MHI_NET_MIN_MTU		ETH_MIN_MTU
++#define MHI_NET_COPYBREAK	2048
+ #define MHI_NET_MAX_MTU		0xffff
+ #define MHI_NET_DEFAULT_MTU	0x4000
+ 
+@@ -207,6 +208,20 @@
+ 			/* Aggregate the final fragment */
+ 			skb = mhi_net_skb_agg(mhi_netdev, skb);
+ 			mhi_netdev->skbagg_head = NULL;
++		} else if (skb->len <= MHI_NET_COPYBREAK &&
++			   skb->truesize > 2 * MHI_NET_COPYBREAK) {
++			/* A large MRU (aggregated frames) with a small packet in
++			 * it: hand the stack a right-sized copy, or every 1.5 kB
++			 * packet charges a 16 kB truesize to the receiving socket
++			 * and shrinks its window.
++			 */
++			struct sk_buff *small = netdev_alloc_skb(mhi_netdev->ndev, skb->len);
++
++			if (small) {
++				skb_put_data(small, skb->data, skb->len);
++				dev_kfree_skb_any(skb);
++				skb = small;
++			}
+ 		}
+ 
+ 		switch (skb->data[0] & 0xf0) {

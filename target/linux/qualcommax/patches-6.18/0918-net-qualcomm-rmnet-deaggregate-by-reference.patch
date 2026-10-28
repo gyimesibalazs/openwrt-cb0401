@@ -1,0 +1,76 @@
+From: Balázs Gyimesi <gyimesi.balazs@gmail.com>
+Subject: [PATCH] net: qualcomm: rmnet: deaggregate by reference
+
+rmnet_map_deaggregate() allocates a fresh skb for every packet of an
+aggregated frame and copies it, which on a small router costs more CPU per
+byte than the aggregation saves. When the frame is a page-frag RX buffer
+that nobody else holds, build each packet as a small linear head (the MAP,
+checksum and IP/TCP headers) plus one frag referencing the frame's page,
+and keep copying otherwise (cloned or kmalloc'd frames, the MAPv4 checksum
+trailer that is read at the tail). The padding is then trimmed with
+pskb_trim(), as a referenced packet is not linear.
+---
+--- a/drivers/net/ethernet/qualcomm/rmnet/rmnet_map_data.c
++++ b/drivers/net/ethernet/qualcomm/rmnet/rmnet_map_data.c
+@@ -16,6 +16,15 @@
+ 
+ #define RMNET_MAP_DEAGGR_SPACING  64
+ #define RMNET_MAP_DEAGGR_HEADROOM (RMNET_MAP_DEAGGR_SPACING / 2)
++/* MAP header, checksum header and the IP/TCP headers with options: what the
++ * stack reads of a referenced packet, kept in its linear part
++ */
++#define RMNET_MAP_DEAGGR_LINEAR   128
++
++/* runtime switch between referencing and copying, for comparison */
++static bool rmnet_deagg_zerocopy = true;
++module_param_named(deagg_zerocopy, rmnet_deagg_zerocopy, bool, 0644);
++MODULE_PARM_DESC(deagg_zerocopy, "deaggregate by page reference instead of copying");
+ 
+ static __sum16 *rmnet_map_get_csum_field(unsigned char protocol,
+ 					 const void *txporthdr)
+@@ -390,6 +399,34 @@
+ 	if (!packet_len)
+ 		return NULL;
+ 
++	/* The frame sits in page memory nobody else holds (a page-frag RX
++	 * buffer, not cloned): reference the packet instead of copying it,
++	 * with its headers in a small linear part. The MAPv4 checksum
++	 * trailer is read at the packet's tail, so that format keeps copying.
++	 */
++	if (rmnet_deagg_zerocopy &&
++	    skb->head_frag && !skb_cloned(skb) && !skb_is_nonlinear(skb) &&
++	    !(port->data_format & RMNET_FLAGS_INGRESS_MAP_CKSUMV4)) {
++		struct page *page = virt_to_head_page(skb->data);
++		unsigned int off = skb->data - (unsigned char *)page_address(page);
++		unsigned int lin = min_t(u32, packet_len, RMNET_MAP_DEAGGR_LINEAR);
++
++		skbn = netdev_alloc_skb(skb->dev, RMNET_MAP_DEAGGR_HEADROOM + lin);
++		if (!skbn)
++			return NULL;
++
++		skb_reserve(skbn, RMNET_MAP_DEAGGR_HEADROOM);
++		skb_put_data(skbn, skb->data, lin);
++		if (packet_len > lin) {
++			get_page(page);
++			skb_add_rx_frag(skbn, 0, page, off + lin, packet_len - lin,
++					packet_len - lin);
++		}
++		skb_pull(skb, packet_len);
++
++		return skbn;
++	}
++
+ 	skbn = alloc_skb(packet_len + RMNET_MAP_DEAGGR_SPACING, GFP_ATOMIC);
+ 	if (!skbn)
+ 		return NULL;
+--- a/drivers/net/ethernet/qualcomm/rmnet/rmnet_handlers.c
++++ b/drivers/net/ethernet/qualcomm/rmnet/rmnet_handlers.c
+@@ -97,7 +97,7 @@
+ 			skb->ip_summed = CHECKSUM_UNNECESSARY;
+ 	}
+ 
+-	skb_trim(skb, len);
++	pskb_trim(skb, len);
+ 	rmnet_deliver_skb(skb);
+ 	return;
+ 
