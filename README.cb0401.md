@@ -120,7 +120,8 @@ tests and recovery.
 The stock firmware's two A/B system slots and its overlay (`rootfs`,
 `rootfs_1`, `overlay`, together 95 MiB) become one UBI partition for OpenWrt.
 U-Boot keeps seeing its three stock partitions; the C3 gives it a RAM-only
-`mtdparts` over the same range:
+`mtdparts` over the same range (the size is the model's: `0x5f40000` on the
+CB0401V2, `0x7300000` on the original CB0401, both from `0xa80000`):
 
     setenv mtdids nand0=nand0 && setenv mtdparts mtdparts=nand0:0x5f40000@0xa80000(fs) && ubi part fs && ubi read 0x44000000 kernel && bootm 0x44000000
 
@@ -272,6 +273,9 @@ RAM system is not affected:
     !bootcmd setenv mtdids nand0=nand0 && setenv mtdparts mtdparts=nand0:0x5f40000@0xa80000(fs) && ubi part fs && ubi read 0x44000000 kernel && bootm 0x44000000
     !nand
     !status
+
+On the original CB0401 the partition is `0x7300000@0xa80000(fs)`; the rest
+of the command is the same.
 
 The boot command lives in the C3's flash (NVS), not in the U-Boot
 environment, which stays untouched. From now on the router boots OpenWrt
