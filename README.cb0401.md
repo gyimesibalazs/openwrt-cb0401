@@ -5,8 +5,10 @@
 > the wired ports, the 5G modem's raw-IP WAN and the 5 GHz radio. A CB0401V2
 > runs it from the NAND: the NSS core boots despite secure boot, both
 > ethernet ports and the 5G modem's WAN are NSS accelerated (ECM offloads
-> the modem's raw-IP traffic through the NSS rmnet path), and the 5 GHz radio
-> uses NSS Wi-Fi offload; the 2.4 GHz radio stays on the CPU path. It is still
+> the modem's raw-IP traffic through the NSS rmnet path), and both radios use
+> NSS Wi-Fi offload. The 2.4 GHz radio runs the multi-PD WLAN.HK.2.7.0.1
+> image instead of the stock 2.6 one: under NSS it completes associations and
+> takes more than one AP. It is still
 > experimental; the stable port is the `cb0401` branch on OpenWrt 25.12. The
 > install procedure below is the same on both.
 
@@ -42,11 +44,11 @@ updated with plain `sysupgrade`.
 
 Limits:
 
-- 2.4 GHz takes one AP interface. A second one crashes the WCSS firmware.
-- No NSS offload on the stable `cb0401` branch (this branch has it, see the
-  note at the top).
-- The WiFi firmware and board files are Xiaomi's signed binaries. They are
-  not in the tree: you extract them from your own unit (step 4).
+- On the stable `cb0401` branch 2.4 GHz takes one AP interface, and there
+  is no NSS offload. This branch lifts both (see the note at the top).
+- The WiFi board files are Xiaomi's binaries. They are not in the tree: you
+  extract them from your own unit (step 4). The WiFi firmware itself is
+  OpenWrt's.
 
 ## The original CB0401 (experimental)
 
@@ -188,12 +190,12 @@ included only with `--modem`. The 105 MiB take about 10 minutes.
 Keep these files private and in more than one place. `0:ART`, `bdata` and
 `overlay` hold the unit's MAC addresses, serial number and keys.
 
-### 4. Extract the stock WiFi files
+### 4. Extract the stock WiFi board files
 
     tools/cb0401/extract-stock-firmware.sh mtd18_rootfs.bin
 
 The script unpacks the stock system from the UBI image in the dump. It copies
-the signed IPQ5018 WCSS firmware and the board files of both radios into
+the board files of both radios into
 `package/firmware/xiaomi-cb0401v2-wifi-firmware/files/` (git-ignored).
 `mtd19_rootfs_1.bin` works too.
 

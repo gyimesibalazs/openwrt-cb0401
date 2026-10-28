@@ -1,13 +1,15 @@
 #!/bin/sh
-# Extract the stock WiFi files the OpenWrt image needs into
+# Extract the stock WiFi board data the OpenWrt image needs into
 # package/firmware/xiaomi-cb0401[v2]-wifi-firmware/files/ (git-ignored: these
 # are vendor binaries, take them from your own unit's stock firmware).
 #
 #   extract-stock-firmware.sh [-m cb0401v2|cb0401] <stock rootfs>
 #
-# -m picks the model (default cb0401v2). The CB0401 (non-V2) uses the same
-# signed Q6 firmware but a different IPQ5018 2.4 GHz board-data index
-# (bdwlan.b24 vs .b23) and its own calibration variant.
+# -m picks the model (default cb0401v2). The CB0401 (non-V2) uses a different
+# IPQ5018 2.4 GHz board-data index (bdwlan.b24 vs .b23) and its own
+# calibration variant. The Q6/M3 firmware is not taken from the stock: this
+# branch runs the multi-PD WLAN.HK.2.7.0.1 image of
+# ath11k-firmware-ipq5018-qcn6122.
 #
 # <stock rootfs> is one of:
 #   - a dump of the stock "rootfs" (or "rootfs_1") partition (UBI image;
@@ -16,8 +18,6 @@
 #   - a directory holding the unpacked stock rootfs
 #
 # Produces:
-#   IPQ5018/q6_fw.*, m3_fw.*  signed WCSS firmware (WLAN.HK.2.6-02451); the
-#                             unit is secure-boot fused and TZ refuses others
 #   IPQ5018/board-2.bin       bdwlan.b23, board-id 35 and 255 (the OTP is not
 #                             programmed, the chip reports 0xff)
 #   QCN9074/board-2.bin       qcn9000/bdwlan.ba0, board-id 255 (0xff reported)
@@ -73,15 +73,11 @@ else
 fi
 
 FW=$ROOT/lib/firmware
-[ -e "$FW/IPQ5018/q6_fw.mdt" ] && [ -e "$FW/IPQ5018/$IPQ_BDF" ] &&
+[ -e "$FW/IPQ5018/$IPQ_BDF" ] &&
 	[ -e "$FW/qcn9000/bdwlan.ba0" ] || die "stock WiFi files not found in $1"
-
-grep -aq 'WLAN.HK.2.6-02451' "$FW"/IPQ5018/q6_fw.b* ||
-	echo "warning: Q6 firmware is not WLAN.HK.2.6-02451 (the tested version)" >&2
 
 rm -rf "$OUT"
 mkdir -p "$OUT/IPQ5018" "$OUT/QCN9074"
-cp -L "$FW"/IPQ5018/q6_fw.* "$FW"/IPQ5018/m3_fw.* "$OUT/IPQ5018/"
 
 python3 "$ENC" "$OUT/IPQ5018/board-2.bin" "$FW/IPQ5018/$IPQ_BDF" \
 	"bus=ahb,qmi-chip-id=0,qmi-board-id=35,variant=$VARIANT" \
@@ -91,5 +87,5 @@ python3 "$ENC" "$OUT/IPQ5018/board-2.bin" "$FW/IPQ5018/$IPQ_BDF" \
 python3 "$ENC" "$OUT/QCN9074/board-2.bin" "$FW/qcn9000/bdwlan.ba0" \
 	"$QCN9074,variant=$VARIANT" "$QCN9074"
 
-echo "stock WiFi files written to $OUT:"
+echo "stock WiFi board data written to $OUT:"
 ls "$OUT/IPQ5018" "$OUT/QCN9074"
