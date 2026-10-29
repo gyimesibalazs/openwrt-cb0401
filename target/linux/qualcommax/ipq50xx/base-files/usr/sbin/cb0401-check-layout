@@ -1,9 +1,10 @@
 #!/bin/sh
 # Xiaomi CB0401 / CB0401V2: check that the NAND still carries the stock
 # partition table (MIBIB) the image is built for. The DTS uses fixed
-# partitions and merges the stock rootfs, rootfs_1 and overlay into one "ubi"
-# partition, so a unit with a different layout would get the wrong blocks
-# erased by ubiformat or sysupgrade.
+# partitions: on the CB0401V2 the "ubi" partition is the stock modem_image,
+# on the CB0401 it merges the stock rootfs, rootfs_1 and overlay. A unit with
+# a different layout would get the wrong blocks erased by ubiformat or
+# sysupgrade.
 #
 #   cb0401-check-layout [MIBIB dump]
 #
@@ -46,7 +47,7 @@ rootfs_1 372 288
 overlay 660 344"
 
 # the "ubi" region /proc/mtd should show, per board (size erasesize)
-UBISIZE_cb0401v2='05f40000 00020000'
+UBISIZE_cb0401v2='093a0000 00020000'	# the stock modem_image, see the DTS
 UBISIZE_cb0401='07300000 00020000'
 
 fail() { echo "cb0401-check-layout: $*" >&2; exit 1; }

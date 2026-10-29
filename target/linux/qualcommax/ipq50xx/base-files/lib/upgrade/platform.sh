@@ -71,8 +71,9 @@ xiaomi_cb0401_prepare_ubi() {
 	# an OpenWrt UBI: upgrade it in place, keeping the erase counters
 	[ "$ubidev" ] && [ "$(nand_find_volume "$ubidev" rootfs_data)" ] && return 0
 
-	# the first install: the partition still holds the three stock UBI
-	# images (rootfs, rootfs_1, overlay), which must not be attached as one
+	# the first install: the partition still holds the stock content (the
+	# modem package's UBI, volume ubi_modem, on the CB0401V2; the three stock
+	# UBI images on the CB0401), which is not ours to upgrade in place
 	echo "no OpenWrt UBI on $CI_UBIPART, formatting it"
 	[ "$ubidev" ] && ubidetach --mtdn="$mtdnum"
 	ubiformat /dev/mtd$mtdnum -y
@@ -265,7 +266,8 @@ platform_do_upgrade() {
 		;;
 	xiaomi,cb0401|\
 	xiaomi,cb0401v2)
-		# one UBI over the stock rootfs, rootfs_1 and overlay partitions
+		# one "ubi" partition: the stock modem_image on the CB0401V2, the
+		# stock rootfs, rootfs_1 and overlay on the CB0401 (cb0401-check-layout)
 		CI_UBIPART="ubi"
 		xiaomi_cb0401_prepare_ubi || return 1
 		nand_do_upgrade "$1"
