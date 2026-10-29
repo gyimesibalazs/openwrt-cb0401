@@ -1,0 +1,27 @@
+#!/bin/sh
+# Xiaomi CB0401 / CB0401V2: the modem's QMAP links feed the NSS, which takes
+# the packets one by one from the device's receive handler (see
+# package/nss/qca-nss-drv patch 0150), so two things the stack does for a
+# host-bound device only cost here:
+# - GRO: a segment GRO has merged can only go through the host stack, so with
+#   GRO on most of the downlink would be forwarded in software (measured
+#   31.5 CPU-s/GB with GRO, 11-17 without);
+# - RPS (the NSS default rps mask lands on every new rx queue): the receive
+#   handler runs on the CPU that took the packet from the modem anyway, so
+#   the flow hash and the backlog queue are a detour for every packet.
+# ModemManager creates a link per connection, so this runs on each one.
+[ "$ACTION" = add ] || exit 0
+case "$DEVICENAME" in
+qmapmux*) ;;
+*) exit 0 ;;
+esac
+. /lib/functions.sh
+case "$(board_name)" in
+xiaomi,cb0401|xiaomi,cb0401v2)
+	ethtool -K "$DEVICENAME" gro off >/dev/null 2>&1
+	for q in /sys/class/net/"$DEVICENAME"/queues/rx-*/rps_cpus; do
+		[ -e "$q" ] && echo 0 > "$q"
+	done
+	;;
+esac
+exit 0

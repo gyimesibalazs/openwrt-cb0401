@@ -27,7 +27,7 @@ include $(INCLUDE_DIR)/nls.mk
 define Package/perf
   SECTION:=devel
   CATEGORY:=Development
-  DEPENDS:= +libelf +libdw +PACKAGE_libunwind:libunwind +libpthread +librt +objdump @!IN_SDK @KERNEL_PERF_EVENTS \
+  DEPENDS:= +libelf +libdw +libzstd +PACKAGE_libunwind:libunwind +libpthread +librt +objdump @!IN_SDK @KERNEL_PERF_EVENTS \
 	    +PACKAGE_libbfd:libbfd +PACKAGE_libopcodes:libopcodes +libtraceevent
   TITLE:=Linux performance monitoring tool
   VERSION:=$(LINUX_VERSION)-r$(PKG_RELEASE)
@@ -55,7 +55,6 @@ MAKE_FLAGS = \
 	NO_LIBAUDIT=1 \
 	NO_LIBCRYPTO=1 \
 	NO_LIBUNWIND=1 \
-	NO_LIBZSTD=1 \
 	NO_LIBCAP=1 \
 	NO_JEVENTS=1 \
 	NO_SHELLCHECK=1 \
