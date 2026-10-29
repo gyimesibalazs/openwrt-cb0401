@@ -2,13 +2,18 @@
 # Xiaomi CB0401 / CB0401V2: the modem's QMAP links feed the NSS, which takes
 # the packets one by one from the device's receive handler (see
 # package/nss/qca-nss-drv patch 0150), so two things the stack does for a
-# host-bound device only cost here:
-# - GRO: a segment GRO has merged can only go through the host stack, so with
-#   GRO on most of the downlink would be forwarded in software (measured
+# host-bound device are set here for every link:
+# - GRO off: a segment GRO has merged can only go through the host stack, so
+#   with GRO on most of the downlink would be forwarded in software (measured
 #   31.5 CPU-s/GB with GRO, 11-17 without);
-# - RPS (the NSS default rps mask lands on every new rx queue): the receive
-#   handler runs on the CPU that took the packet from the modem anyway, so
-#   the flow hash and the backlog queue are a detour for every packet.
+# - RPS to the CPUs the modem's interrupts are not on: the MHI interrupts
+#   and the deaggregation run on the last CPU (cb0401v2-pcie-modem), the
+#   hand-off to the NSS then runs on the other one. Same CPU cost per GB as
+#   no RPS (12.1-12.5 vs 11.2-12.4 CPU-s/GB measured), but the loaded core
+#   drops from 11 % to 9 % at 90 Mbit/s, which lifts the ceiling by ~20 %.
+#   The NSS default RPS mask would steer to the last CPU instead, the one the
+#   packet is already on: a flow hash and a backlog queue per packet for
+#   nothing (18.9 CPU-s/GB instead of 12.7).
 # ModemManager creates a link per connection, so this runs on each one.
 [ "$ACTION" = add ] || exit 0
 case "$DEVICENAME" in
@@ -19,8 +24,11 @@ esac
 case "$(board_name)" in
 xiaomi,cb0401|xiaomi,cb0401v2)
 	ethtool -K "$DEVICENAME" gro off >/dev/null 2>&1
+	ncpu=$(grep -c ^processor /proc/cpuinfo)
+	# all CPUs but the last, as a hex mask; a single CPU gets no RPS
+	mask=$(printf '%x' $(( (1 << (ncpu - 1)) - 1 )))
 	for q in /sys/class/net/"$DEVICENAME"/queues/rx-*/rps_cpus; do
-		[ -e "$q" ] && echo 0 > "$q"
+		[ -e "$q" ] && echo "$mask" > "$q"
 	done
 	;;
 esac

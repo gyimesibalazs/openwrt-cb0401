@@ -69,45 +69,61 @@ automatically. Build its WiFi files from a CB0401 unit's own stock with
 ## The modem data path
 
 The modem's downlink is where this SoC spends its CPU, so the branch
-carries the stock firmware's recipe on upstream drivers:
+carries the stock firmware's recipe on upstream drivers, tuned by
+measurement (CPU seconds per GB of forwarded traffic, the number that does
+not depend on the cell's mood; all A/B figures below from one automated
+load, eight parallel downloads pulled through the router by a wired client
+at ~85 Mbit/s):
 
 - **QMAP** (`network.wwan.multiplex='required'`, set by a uci-default): the
-  modem aggregates up to 20 packets / 15360 bytes into one 16 KiB MHI
-  buffer (the stock MRU and WDA settings; ModemManager asks for them on
-  `mhi_net`, patch 0104), and `rmnet` splits the frame into one packet per
-  skb. `mhi_net` takes its 16 KiB buffers from pages instead of kmalloc
-  (patch 0915) and copies a lone small packet out of such a buffer (patch
-  0916), so that a host-bound flow is not charged 16 KiB per packet.
+  modem aggregates up to 32 packets / 31744 bytes into one 32 KiB MHI
+  buffer (ModemManager asks for that on `mhi_net`, patch 0104; the MRU is
+  the kernel's, patch 0914), and `rmnet` splits the frame into one packet
+  per skb. Twice the stock frame size (15360 / 20 on a 16 KiB MRU) measured
+  16.0 -> 14.6 s/GB. `mhi_net` takes its buffers from pages (patch 0915)
+  and copies a lone small packet out of such a buffer (patch 0916), so that
+  a host-bound flow is not charged 32 KiB per packet.
+- **Buffers the firmware keeps**: a packet handed to the NSS is offered as
+  one of its own receive buffers (`package/nss/qca-nss-drv` patch 0150,
+  module parameter `rmnet_reusable`), so it is not returned, freed and
+  replaced by a fresh allocation per packet; `rmnet` sizes its copies for
+  that (kernel patch 0918, `rmnet.deagg_min_alloc`). 14.6 -> ~12 s/GB. The
+  firmware holds the buffers for the duration of a burst (~10k, 40 MB, and
+  gives them back within a minute); above `rmnet_reuse_max` held it is
+  offered no more.
 - **Nothing in the way between rmnet and the NSS** (a hotplug script on
   every QMAP link): GRO off, because a segment GRO merges can only be
-  forwarded by the host (the NSS bind handler leaves it there,
-  `package/nss/qca-nss-drv` patch 0150, as the firmware returned such
-  segments without their checksum state), and with GRO on most of the
-  downlink went that way (31.5 CPU-s/GB instead of 15); and RPS off,
-  because the NSS default RPS mask lands on every new netdev and on the
-  QMAP link it only sends every packet through a flow hash and a backlog
-  queue to the CPU it is already on (18.9 CPU-s/GB instead of 12.7).
+  forwarded by the host (the NSS bind handler leaves it there, patch 0150,
+  as the firmware returned such segments without their checksum state), and
+  with GRO on most of the downlink went that way (31.5 CPU-s/GB instead of
+  15); and RPS to the CPU the modem's interrupts are *not* on. The NSS
+  default RPS mask would steer every packet through a flow hash and a
+  backlog queue to the CPU it is already on (18.9 s/GB instead of 12.7 over
+  Wi-Fi); steering to the other CPU costs the same per GB as no RPS, but
+  the loaded core drops from 13 % to 9 % at 90 Mbit/s, ~20 % more ceiling.
 - **Interrupts**: the modem's MHI interrupts are moved to the last CPU at
   boot (`cb0401v2-pcie-modem`); otherwise all of its receive work lands on
   CPU0 next to the NSS and Wi-Fi work.
 
-Measured on a V2 with a phone speedtest over 5 GHz (CPU seconds per GB of
-forwarded traffic, the number that does not depend on the cell's mood):
-raw-IP 21.0 s/GB with everything on CPU0 (~54 % of it at 205 Mbit/s),
-19.5 s/GB with the interrupts on CPU1, **12.7 s/GB over QMAP** with the
-busiest core at 12 % at 100-180 Mbit/s. Projected from that, the modem path
-runs out of CPU around 900 Mbit/s, about where the stock firmware is
-reported to top out. The cost does not follow the CPU clock (the same at
-1008 and 1296 MHz): it is memory and I/O bound, so the way down is fewer
-per-packet operations, not a faster core.
+Over 5 GHz Wi-Fi with a phone speedtest (150-190 Mbit/s): raw-IP 21.0 s/GB
+with everything on CPU0, 19.5 with the interrupts on CPU1, 12.7 over QMAP
+before the aggregation and buffer changes above (those were measured on the
+wired path only, where everything costs ~25 % more per GB at its lower
+rate). Projected from the loaded core's share, the modem path runs out of
+CPU around 1 Gbit/s, which is also the wired port's speed. The cost does
+not follow the CPU clock (the same at 1008 and 1296 MHz): it is memory and
+I/O bound, so the way down is fewer per-packet operations, not a faster
+core.
 
-Two things were tried and measured worse, so they are not in the tree:
-deaggregation by reference (one skb head plus a frag into the frame's page
-instead of a copy per packet: 15.1 s/GB with the headers in a 128-byte
-head; a headless packet is not even looked up by the firmware, which reads
-the IP header from the first segment, and came back as an exception on
-20 % of the packets), and ringing the firmware once per batch of injected
-packets instead of per packet (no measurable change).
+Tried and measured worse or useless, so not in the tree: deaggregation by
+reference (one skb head plus a frag into the frame's page instead of a copy
+per packet: 15.1 s/GB with the headers in a 128-byte head; a headless
+packet is not even looked up by the firmware, which reads the IP header
+from the first segment, and came back as an exception on 20 % of the
+packets); ringing the firmware once per batch of injected packets instead
+of per packet (no change); asking the modem for a minimum padding between
+aggregated packets, which would have made room for an Ethernet header in
+place (the RG520N accepts and echoes the WDA setting but pads nothing).
 
 To go back to raw-IP: `uci delete network.wwan.multiplex; uci commit
 network; reboot` (the modem keeps its data format until it is reset, so a

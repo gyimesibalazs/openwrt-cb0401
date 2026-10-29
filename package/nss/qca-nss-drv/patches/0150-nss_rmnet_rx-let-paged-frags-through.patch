@@ -13,10 +13,64 @@ packet whose checksum state is gone, and TCP then verifies a checksum over
 the merged payload and drops it: TcpInCsumErrors on every host-bound flow
 through a QMAP link. Leave merged segments to the stack; a flow that is
 accelerated never comes back this way.
----
+
+Injected packets are also offered to the firmware for reuse as its empty
+buffers (module parameter rmnet_reusable), so that one it accepts is not
+returned, freed and replaced by a fresh allocation per packet. The firmware
+holds them for the duration of a burst; above rmnet_reuse_max held buffers
+no more are offered.
 --- a/nss_rmnet_rx.c
 +++ b/nss_rmnet_rx.c
-@@ -972,7 +972,22 @@
+@@ -22,6 +22,25 @@
+  */
+ 
+ #include "nss_tx_rx_common.h"
++
++/*
++ * Let the firmware keep an injected packet's buffer as one of its empty
++ * buffers instead of returning it (nss_core_skb_can_reuse() decides whether
++ * a buffer qualifies).
++ */
++static bool nss_rmnet_rx_reusable = true;
++module_param_named(rmnet_reusable, nss_rmnet_rx_reusable, bool, 0644);
++MODULE_PARM_DESC(rmnet_reusable, "offer injected rmnet buffers to the firmware for reuse");
++
++/*
++ * The firmware holds the buffers it accepts for the duration of a burst and
++ * hands them back when the traffic stops (measured: ~13k buffers idle, ~23k
++ * during a download, back to 13k within a minute). Stop offering buffers
++ * above this many held, so that a long burst cannot grow the set unbounded.
++ */
++static unsigned int nss_rmnet_rx_reuse_max = 20480;
++module_param_named(rmnet_reuse_max, nss_rmnet_rx_reuse_max, uint, 0644);
++MODULE_PARM_DESC(rmnet_reuse_max, "offer no buffer for reuse while the firmware holds more than this many");
+ #include "nss_rmnet_rx_stats.h"
+ #include <net/arp.h>
+ #include <linux/netfilter.h>
+@@ -554,6 +573,7 @@
+ {
+ 	int32_t if_num = handle->if_num_h2n;
+ 	struct nss_ctx_instance *nss_ctx = handle->nss_ctx;
++	uint32_t flag;
+ 	int cpu = 0;
+ 
+ 	if (unlikely(nss_ctl_redirect == 0)) {
+@@ -586,7 +606,13 @@
+ 	put_cpu();
+ 	skb_set_queue_mapping(skb, cpu);
+ 
+-	return nss_core_send_packet(nss_ctx, skb, if_num, H2N_BIT_FLAG_VIRTUAL_BUFFER);
++	flag = H2N_BIT_FLAG_VIRTUAL_BUFFER;
++	if (nss_rmnet_rx_reusable &&
++	    NSS_PKT_STATS_READ(&nss_ctx->nss_top->stats_drv[NSS_DRV_STATS_NSS_SKB_COUNT]) < nss_rmnet_rx_reuse_max) {
++		flag |= H2N_BIT_FLAG_BUFFER_REUSABLE;
++	}
++
++	return nss_core_send_packet(nss_ctx, skb, if_num, flag);
+ }
+ EXPORT_SYMBOL(nss_rmnet_rx_tx_buf);
+ 
+@@ -972,7 +998,22 @@
  	 * zero: the source interface comes from the node pair and any
  	 * forwarding decision from the rule.
  	 */

@@ -1,0 +1,39 @@
+From: Balázs Gyimesi <gyimesi.balazs@gmail.com>
+Subject: [PATCH] net: qualcomm: rmnet: size the deaggregated copies for buffer reuse
+
+An offload engine on the device's receive handler (Qualcomm NSS) keeps a
+packet's buffer as one of its own receive buffers if it is at least its
+receive buffer size, and frees a smaller one, allocating a new empty buffer
+in its place. Allocate the copies at that size (a module parameter,
+0 keeps the exact size).
+---
+--- a/drivers/net/ethernet/qualcomm/rmnet/rmnet_map_data.c
++++ b/drivers/net/ethernet/qualcomm/rmnet/rmnet_map_data.c
+@@ -17,6 +17,17 @@
+ #define RMNET_MAP_DEAGGR_SPACING  64
+ #define RMNET_MAP_DEAGGR_HEADROOM (RMNET_MAP_DEAGGR_SPACING / 2)
+ 
++/* An offload engine on the device's receive handler (Qualcomm NSS) keeps a
++ * packet's buffer as one of its own receive buffers instead of handing it
++ * back, if the buffer is at least its receive buffer size (1792 bytes plus
++ * NET_SKB_PAD); a smaller one is returned and freed, and a new empty buffer
++ * is allocated for the engine in its place. Size the copies for that; 0
++ * keeps the exact size.
++ */
++static unsigned int rmnet_deagg_min_alloc = 1856;
++module_param_named(deagg_min_alloc, rmnet_deagg_min_alloc, uint, 0644);
++MODULE_PARM_DESC(deagg_min_alloc, "minimum allocation of a deaggregated packet (0: exact)");
++
+ static __sum16 *rmnet_map_get_csum_field(unsigned char protocol,
+ 					 const void *txporthdr)
+ {
+@@ -390,7 +401,8 @@
+ 	if (!packet_len)
+ 		return NULL;
+ 
+-	skbn = alloc_skb(packet_len + RMNET_MAP_DEAGGR_SPACING, GFP_ATOMIC);
++	skbn = alloc_skb(max_t(u32, packet_len + RMNET_MAP_DEAGGR_SPACING,
++			       rmnet_deagg_min_alloc), GFP_ATOMIC);
+ 	if (!skbn)
+ 		return NULL;
+ 
