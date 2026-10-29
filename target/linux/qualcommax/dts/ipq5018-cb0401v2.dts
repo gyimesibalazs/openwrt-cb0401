@@ -339,21 +339,38 @@
 			};
 
 			/*
-			 * The stock rootfs, rootfs_1 and overlay partitions are
-			 * contiguous; OpenWrt uses them as one UBI (kernel, rootfs and
-			 * rootfs_data volumes). U-Boot keeps its own MIBIB view (three
-			 * partitions); the rescue C3 boots it with a RAM-only mtdparts
-			 * "fs" over the same range plus "ubi read kernel".
+			 * Dual boot. The stock system stays where U-Boot's bootmiwifi
+			 * finds it (rootfs, rootfs_1, overlay), so the box boots the
+			 * stock firmware without the rescue C3 or with an emptied
+			 * environment. OpenWrt lives in the 147 MiB modem_image
+			 * partition instead, as one UBI (kernel, rootfs and
+			 * rootfs_data volumes); the C3 boots it with a RAM-only
+			 * mtdparts "fs" over that range plus "ubi read kernel".
+			 * modem_image only held the modem's firmware update package,
+			 * which the stock firmware reads during its own system
+			 * upgrade (such an upgrade would overwrite OpenWrt); keep a
+			 * dump of it. The stock partitions are exposed under other
+			 * names so that nothing mounts them, writable to restore them
+			 * from a dump.
 			 */
 			partition@a80000 {
-				label = "ubi";
-				reg = <0x00a80000 0x5f40000>;
+				label = "stock_rootfs";
+				reg = <0x00a80000 0x1f00000>;
+			};
+
+			partition@2980000 {
+				label = "stock_rootfs_1";
+				reg = <0x02980000 0x1f00000>;
+			};
+
+			partition@4880000 {
+				label = "stock_overlay";
+				reg = <0x04880000 0x2140000>;
 			};
 
 			partition@69c0000 {
-				label = "modem_image";
+				label = "ubi";
 				reg = <0x069c0000 0x93a0000>;
-				read-only;
 			};
 		};
 	};

@@ -120,17 +120,53 @@ It also opens a WiFi AP for 90 s after power-on. The console is reachable
 over that AP, and so are an OTA update page and a TFTP RAM boot mode for
 tests and recovery.
 
-The stock firmware's two A/B system slots and its overlay (`rootfs`,
-`rootfs_1`, `overlay`, together 95 MiB) become one UBI partition for OpenWrt.
-U-Boot keeps seeing its three stock partitions; the C3 gives it a RAM-only
-`mtdparts` over the same range (the size is the model's: `0x5f40000` on the
-CB0401V2, `0x7300000` on the original CB0401, both from `0xa80000`):
+On the CB0401V2, OpenWrt lives in the stock `modem_image` partition (147 MiB
+at `0x69c0000`) as one UBI (kernel, rootfs and settings). The stock
+firmware's two A/B system slots and its overlay (`rootfs`, `rootfs_1`,
+`overlay`) stay on the flash untouched, so the stock U-Boot's own
+`bootmiwifi` still boots the stock firmware: that is the way back if the C3
+is ever removed, dead or forgotten. U-Boot keeps seeing its stock
+partitions; the C3 gives it a RAM-only `mtdparts` over the OpenWrt range and
+boots from it:
 
-    setenv mtdids nand0=nand0 && setenv mtdparts mtdparts=nand0:0x5f40000@0xa80000(fs) && ubi part fs && ubi read 0x44000000 kernel && bootm 0x44000000
+    setenv mtdids nand0=nand0 && setenv mtdparts mtdparts=nand0:0x93a0000@0x69c0000(fs) && ubi part fs && ubi read 0x44000000 kernel && bootm 0x44000000
+
+`modem_image` only held the package the stock firmware uses to update the
+modem's own firmware during a stock system upgrade; the modem does not need
+it to run.
+
+The original CB0401 has no `modem_image`, so there the three stock
+partitions (`rootfs`, `rootfs_1`, `overlay`, together 115 MiB) become the
+OpenWrt UBI: `0x7300000@0xa80000(fs)` in the command above, and the stock
+firmware is gone from the flash once OpenWrt is installed.
 
 Nothing else on the flash is written: the boot chain (SBL1 .. APPSBL_1), the
-U-Boot environment, the calibration data (ART, bdata) and the modem's own
-partition (`modem_image`) stay as they came.
+U-Boot environment and the calibration data (ART, bdata) stay as they came.
+
+### Why OpenWrt moved to `modem_image` (CB0401V2)
+
+Until 2026-10-29 OpenWrt went over `rootfs`, `rootfs_1` and `overlay` on the
+CB0401V2 too, as one 95 MiB UBI at `0xa80000`. That left the box with a
+single way to boot: the C3. Without it (unplugged, dead, or with its NVS
+cleared) there was no bootable system on the flash, and the stock U-Boot
+cannot bring one back over the network either: `tftpboot` loads at
+0x44000000 while U-Boot itself runs at 0x4a92xxxx, so a file of more than
+about 100 MiB overwrites the running U-Boot; the 153 MiB stock `full_all`
+image can never be loaded that way, and the kernel loader refuses anything
+over 16 MiB. With OpenWrt in `modem_image` the stock firmware stays in
+place and `bootmiwifi` boots it with no C3 at all, which also makes the
+first install reversible without a flash programmer. OpenWrt gets 147 MiB
+instead of 95 MiB as well. The price: a stock system upgrade run from the
+stock firmware rewrites `modem_image` and so wipes OpenWrt, settings
+included, and `modem_image` has to be in the backup (`--modem`, step 3),
+because that is the partition the install erases now.
+
+An image built before that date boots from `0x5f40000@0xa80000(fs)` and
+expects its `ubi` partition there; its `sysupgrade` refuses the new layout's
+image and vice versa (`cb0401-check-layout`), so a unit on the old layout
+moves to the new one by a fresh install: restore the stock partitions from
+the backup (see "Going back to stock"), RAM-boot the new image, install it,
+and store the new boot command in the C3.
 
 ## What you need
 
@@ -204,9 +240,10 @@ with `reboot` from a shell, or with `reset` at the U-Boot prompt.
 
 ### 3. Back up the whole NAND
 
-**Do this before anything else.** The install erases both stock system slots
-and the stock overlay. This backup is the only way back to the stock firmware,
-and it is also where the WiFi files in step 4 come from.
+**Do this before anything else.** On the CB0401V2 the install erases
+`modem_image`; on the original CB0401 it erases both stock system slots and
+the stock overlay. This backup is the only way to put those back, and it is
+also where the WiFi files in step 4 come from.
 
 The backup runs from U-Boot, so it does not depend on the stock firmware's
 SSH (which may be closed). With the router at the prompt, run on the PC:
@@ -222,8 +259,10 @@ writes the flash.
 The first file is the partition table (MIBIB). The script compares it with
 the expected stock layout and **stops if it differs**: a unit with another
 layout must not get this image. You get the nanddump names: `mtd0_0_SBL1.bin`
-.. `mtd20_overlay.bin`. `modem_image` (147 MiB, never written by OpenWrt) is
-included only with `--modem`. The 105 MiB take about 10 minutes.
+.. `mtd20_overlay.bin`. On the CB0401V2 pass `--modem`: it adds `modem_image`
+(147 MiB, in 64 MiB pieces `mtd21_modem_image.bin.part0..2`), the partition
+OpenWrt is going to take. The 105 MiB take about 10 minutes, `modem_image`
+about 15 more.
 
 Keep these files private and in more than one place. `0:ART`, `bdata` and
 `overlay` hold the unit's MAC addresses, serial number and keys.
@@ -273,12 +312,12 @@ On the C3 console, store the NAND boot command once, and switch it back to
 NAND mode. This only changes what the C3 does at the next boot; the running
 RAM system is not affected:
 
-    !bootcmd setenv mtdids nand0=nand0 && setenv mtdparts mtdparts=nand0:0x5f40000@0xa80000(fs) && ubi part fs && ubi read 0x44000000 kernel && bootm 0x44000000
+    !bootcmd setenv mtdids nand0=nand0 && setenv mtdparts mtdparts=nand0:0x93a0000@0x69c0000(fs) && ubi part fs && ubi read 0x44000000 kernel && bootm 0x44000000
     !nand
     !status
 
-On the original CB0401 the partition is `0x7300000@0xa80000(fs)`; the rest
-of the command is the same.
+On the original CB0401 the partition is `0x7300000@0xa80000(fs)` (the three
+stock system partitions); the rest of the command is the same.
 
 The boot command lives in the C3's flash (NVS), not in the U-Boot
 environment, which stays untouched. From now on the router boots OpenWrt
@@ -293,21 +332,24 @@ a shell, after copying the file over:
 
     sysupgrade -n /tmp/openwrt-qualcommax-ipq50xx-xiaomi_cb0401v2-squashfs-sysupgrade.bin
 
-sysupgrade first runs `cb0401v2-check-layout` and refuses the image on an
+sysupgrade first runs `cb0401-check-layout` and refuses the image on an
 unexpected partition table. Then it sees that the `ubi` partition holds no
-OpenWrt UBI yet, formats it, writes the image and reboots into OpenWrt from
-NAND.
+OpenWrt UBI yet (on the CB0401V2 the stock modem package's own UBI, volume
+`ubi_modem`; on the CB0401 the three stock UBI images), formats it, writes
+the image and reboots into OpenWrt from NAND.
 
-This is the step that erases the stock firmware: it rewrites
-0xa80000-0x69c0000, the stock `rootfs`, `rootfs_1` and `overlay`.
+On the CB0401V2 this step rewrites `modem_image` (0x69c0000-0xfd60000); the
+stock firmware stays on the flash, bootable with `bootmiwifi`. On the
+original CB0401 it is the step that erases the stock firmware: it rewrites
+0xa80000-0x7d80000, the stock `rootfs`, `rootfs_1` and `overlay`.
 
 The manual way does the same with the factory image:
 
     scp -O ...-squashfs-factory.ubi root@192.168.1.1:/tmp/
     ssh root@192.168.1.1
-    cb0401v2-check-layout
-    grep '"ubi"' /proc/mtd           # mtd18: 05f40000 00020000 "ubi"
-    ubiformat /dev/mtd18 -y -f /tmp/openwrt-qualcommax-ipq50xx-xiaomi_cb0401v2-squashfs-factory.ubi
+    cb0401-check-layout
+    grep '"ubi"' /proc/mtd           # CB0401V2: mtd21: 093a0000 00020000 "ubi" (CB0401: mtd18, 07300000)
+    ubiformat /dev/mtd21 -y -f /tmp/openwrt-qualcommax-ipq50xx-xiaomi_cb0401v2-squashfs-factory.ubi
     reboot
 
 The modem needs its stock PCIe data path (`AT+QCFG="data_interface",1,0`).
@@ -317,7 +359,7 @@ Units that were switched to USB elsewhere need it set back.
 
     sysupgrade /tmp/openwrt-...-xiaomi_cb0401v2-squashfs-sysupgrade.bin
 
-Before it writes anything, sysupgrade runs `cb0401v2-check-layout` and refuses
+Before it writes anything, sysupgrade runs `cb0401-check-layout` and refuses
 the image if the stock partition table is not the expected one. Then it
 replaces the `kernel` and `rootfs` volumes inside the UBI partition. The
 settings (`rootfs_data` volume) are kept, unless you pass `-n`. Nothing
@@ -328,24 +370,58 @@ initramfs, and run sysupgrade from there.
 
 ## Going back to stock
 
-Restore the three partitions the install replaced from the step 3 backup, at
-the U-Boot prompt (`!hold`, then restart). Do it one file at a time, because a
-file has to fit in the 96 MiB RAM window at 0x44000000:
+### CB0401V2
 
-    tftpboot 0x44000000 mtd18_rootfs.bin
-    nand erase 0xa80000 0x1f00000
-    nand write 0x44000000 0xa80000 0x1f00000
+The stock firmware is still on the flash. To boot it once, type `!hold` on
+the C3 console, restart the router and type `bootmiwifi` (the stock
+`bootcmd`) at the U-Boot prompt. To leave OpenWrt for good, remove the C3
+(or at least its wire to the router's RX): the stock U-Boot autoboots the
+stock firmware again. Nothing has to be written for either. `bootmiwifi`
+picks the system slot from the `flag_boot_rootfs` variable and counts
+failed attempts in `flag_try_sys1_failed` / `flag_try_sys2_failed`; the
+backup's values are 0 (`printenv` shows them, `setenv ...; saveenv` puts
+them back).
 
-    tftpboot 0x44000000 mtd19_rootfs_1.bin
-    nand erase 0x2980000 0x1f00000
-    nand write 0x44000000 0x2980000 0x1f00000
+The stock firmware does not need `modem_image` to run; it reads it only
+during a stock system upgrade, to update the modem's firmware. To put that
+back too, restore `mtd21_modem_image.bin.part0..2` from the step 3 backup
+the way described below for the CB0401, into the `ubi` partition (mtd21)
+from a RAM boot (`ubidetach -m 21` first, the pieces at offsets 0,
+`0x4000000` and `0x8000000`). It erases OpenWrt.
 
-    tftpboot 0x44000000 mtd20_overlay.bin
-    nand erase 0x4880000 0x2140000
-    nand write 0x44000000 0x4880000 0x2140000
+A CB0401V2 still on the old layout (OpenWrt over the stock partitions, see
+"Why OpenWrt moved to `modem_image`") gets its stock firmware back the same
+way as the CB0401 below, but from a RAM boot of a current image, where the
+three stock partitions are separate (`stock_rootfs`, `stock_rootfs_1`,
+`stock_overlay` = mtd18, mtd19, mtd20) and each dump goes to its own
+partition without `-s`.
 
-Then remove the C3 (or at least its wire to the router's RX) so that the
-stock U-Boot can autoboot again.
+### CB0401
+
+Restore the three partitions the install replaced from the step 3 backup.
+**The empty pages must be skipped while writing.** The stock kernel's NAND
+driver cannot read a page that was *programmed* with all 0xff bytes (it
+reports an ECC error on it), while the dump holds the stock image's erased
+pages as 0xff. A plain `nand write` or `mtd write` of the dump therefore
+gives a stock system that starts but fails to mount `/data` with
+`ubi_io_read: error -74 (ECC error)` and reboots in a loop.
+
+RAM-boot OpenWrt (`!tftp`, step 6), copy the dump files to `/tmp` and write
+them with `nandwrite --skip-all-ffs` (`nand-utils` is in the image). The
+three stock partitions are one `ubi` partition (mtd18) in OpenWrt's view,
+and the kernel may have attached it, so detach it first:
+
+    ubidetach -m 18
+    flash_erase /dev/mtd18 0 0
+    nandwrite -p --skip-all-ffs /dev/mtd18 /tmp/mtd18_rootfs.bin
+    nandwrite -p --skip-all-ffs -s 0x2400000 /dev/mtd18 /tmp/mtd19_rootfs_1.bin
+    nandwrite -p --skip-all-ffs -s 0x4800000 /dev/mtd18 /tmp/mtd20_overlay.bin
+
+(`nandwrite` skips bad blocks as `nanddump` skipped them. If a bad block
+sits inside `rootfs` or `rootfs_1`, the next partition's start moves by one
+block: check with `nand bad` at the U-Boot prompt first.) Then remove the C3
+(or at least its wire to the router's RX) so that the stock U-Boot can
+autoboot again.
 
 Never write the boot chain (SBL1 .. APPSBL_1). The secure boot fuse is blown
 (`is_sec_boot_enabled` at the U-Boot prompt: "secure boot fuse is enabled"),

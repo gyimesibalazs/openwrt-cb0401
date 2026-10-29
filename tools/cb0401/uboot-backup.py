@@ -164,7 +164,7 @@ def main():
     ap.add_argument("--hold", action="store_true",
                     help="arm !hold and wait for the router to be restarted")
     ap.add_argument("--modem", action="store_true",
-                    help="also dump modem_image (147 MiB, never written)")
+                    help="also dump modem_image (147 MiB; the CB0401V2 install puts OpenWrt there)")
     args = ap.parse_args()
 
     con = Console(args.host, args.port)

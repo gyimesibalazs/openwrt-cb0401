@@ -247,7 +247,7 @@ define Device/xiaomi_cb0401
 	DEVICE_PACKAGES := kmod-ath11k-pci ath11k-firmware-qcn9074 \
 		ath11k-firmware-ipq5018-qcn6122 xiaomi-cb0401-wifi-firmware \
 		xiaomi-cb0401v2-modem kmod-usb-serial-option \
-		i2c-tools
+		i2c-tools nand-utils
 endef
 TARGET_DEVICES += xiaomi_cb0401
 
@@ -267,7 +267,7 @@ define Device/xiaomi_cb0401v2
 	DEVICE_PACKAGES := kmod-ath11k-pci ath11k-firmware-qcn9074 \
 		ath11k-firmware-ipq5018-qcn6122 xiaomi-cb0401v2-wifi-firmware \
 		xiaomi-cb0401v2-modem kmod-usb-serial-option \
-		i2c-tools
+		i2c-tools nand-utils
 endef
 TARGET_DEVICES += xiaomi_cb0401v2
 
