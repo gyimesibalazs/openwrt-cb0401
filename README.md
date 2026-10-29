@@ -82,9 +82,10 @@ boots from it:
 
     setenv mtdids nand0=nand0 && setenv mtdparts mtdparts=nand0:0x93a0000@0x69c0000(fs) && ubi part fs && ubi read 0x44000000 kernel && bootm 0x44000000
 
-`modem_image` only held the package the stock firmware uses to update the
-modem's own firmware during a stock system upgrade; the modem does not need
-it to run.
+`modem_image` only held a copy of the modem's firmware update package. The
+modem runs its firmware from its own flash, the same package is inside
+Xiaomi's `full_all` image as `modem_image.zip`, and the stock firmware
+neither reads the partition at boot nor writes it (see below).
 
 The original CB0401 has no `modem_image`, so there the three stock
 partitions (`rootfs`, `rootfs_1`, `overlay`, together 115 MiB) become the
@@ -107,10 +108,16 @@ image can never be loaded that way, and the kernel loader refuses anything
 over 16 MiB. With OpenWrt in `modem_image` the stock firmware stays in
 place and `bootmiwifi` boots it with no C3 at all, which also makes the
 first install reversible without a flash programmer. OpenWrt gets 147 MiB
-instead of 95 MiB as well. The price: a stock system upgrade run from the
-stock firmware rewrites `modem_image` and so wipes OpenWrt, settings
-included, and `modem_image` has to be in the backup (`--modem`, step 3),
-because that is the partition the install erases now.
+instead of 95 MiB as well. The price: `modem_image` has to be in the backup (`--modem`, step 3),
+because that is the partition the install erases now. The stock firmware
+itself does not touch it: nothing reads it at boot (the stock 3.0.23 booted
+with OpenWrt in it, `/data` and the modem up), and its system upgrade
+(checked in the 3.0.23 and 3.0.100 scripts, `/lib/upgrade/boardupgrade.sh`)
+flashes the modem from the `modem_image.zip` inside the upgrade package
+with `QFirehose` / `quectel_fota`, never from or to the partition. Only an
+upgrade package of the "modem image stored in flash" kind (`IMAGE_MODULE=3`)
+would read it, and it fails with "the firmware have no modem image" instead
+of flashing anything.
 
 An image built before that date boots from `0x5f40000@0xa80000(fs)` and
 expects its `ubi` partition there; its `sysupgrade` refuses the new layout's
@@ -333,9 +340,9 @@ failed attempts in `flag_try_sys1_failed` / `flag_try_sys2_failed`; the
 backup's values are 0 (`printenv` shows them, `setenv ...; saveenv` puts
 them back).
 
-The stock firmware does not need `modem_image` to run; it reads it only
-during a stock system upgrade, to update the modem's firmware. To put that
-back too, restore `mtd21_modem_image.bin.part0..2` from the step 3 backup
+The stock firmware does not need `modem_image`: nothing reads it at boot,
+and its system upgrade flashes the modem from the upgrade package, not from
+the partition. To put it back anyway, restore `mtd21_modem_image.bin.part0..2` from the step 3 backup
 the way described below for the CB0401, into the `ubi` partition (mtd21)
 from a RAM boot (`ubidetach -m 21` first, the pieces at offsets 0,
 `0x4000000` and `0x8000000`). It erases OpenWrt.
