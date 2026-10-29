@@ -346,10 +346,11 @@
 			 * partition instead, as one UBI (kernel, rootfs and
 			 * rootfs_data volumes); the C3 boots it with a RAM-only
 			 * mtdparts "fs" over that range plus "ubi read kernel".
-			 * modem_image only held the modem's firmware update package,
-			 * which the stock firmware reads during its own system
-			 * upgrade (such an upgrade would overwrite OpenWrt); keep a
-			 * dump of it. The stock partitions are exposed under other
+			 * modem_image only held a copy of the modem's firmware update
+			 * package; the stock firmware neither reads it at boot nor
+			 * writes it (its system upgrade flashes the modem from the
+			 * upgrade package). Keep a dump of it anyway. The stock
+			 * partitions are exposed under other
 			 * names so that nothing mounts them, writable to restore them
 			 * from a dump.
 			 */
