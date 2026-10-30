@@ -14,6 +14,13 @@
 #   The NSS default RPS mask would steer to the last CPU instead, the one the
 #   packet is already on: a flow hash and a backlog queue per packet for
 #   nothing (18.9 CPU-s/GB instead of 12.7).
+# - the NSS-to-host delivery (nss_queue1, where nss-irq-affinity's pri_map
+#   sends every return when a modem is present) to the same CPUs: that
+#   script assumes the modem interrupt stays on CPU0 and puts the delivery
+#   on CPU1, but here the modem is on the last CPU. Both cores then carry
+#   the same load, as on the stock firmware, at less CPU per GB (measured
+#   over 5 GHz Wi-Fi at ~205 Mbit/s: 10.4-10.9 -> 8.1-9.4 CPU-s/GB, busiest
+#   core 18 % -> 12-13 %).
 # ModemManager creates a link per connection, so this runs on each one.
 [ "$ACTION" = add ] || exit 0
 case "$DEVICENAME" in
@@ -29,6 +36,10 @@ xiaomi,cb0401|xiaomi,cb0401v2)
 	mask=$(printf '%x' $(( (1 << (ncpu - 1)) - 1 )))
 	for q in /sys/class/net/"$DEVICENAME"/queues/rx-*/rps_cpus; do
 		[ -e "$q" ] && echo "$mask" > "$q"
+	done
+	[ "$mask" = 0 ] && exit 0
+	for irq in $(awk '$NF == "nss_queue1" { sub(/:/, "", $1); print $1 }' /proc/interrupts); do
+		echo "$mask" > /proc/irq/"$irq"/smp_affinity 2>/dev/null
 	done
 	;;
 esac

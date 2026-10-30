@@ -103,7 +103,20 @@ at ~85 Mbit/s):
   the loaded core drops from 13 % to 9 % at 90 Mbit/s, ~20 % more ceiling.
 - **Interrupts**: the modem's MHI interrupts are moved to the last CPU at
   boot (`cb0401v2-pcie-modem`); otherwise all of its receive work lands on
-  CPU0 next to the NSS and Wi-Fi work.
+  CPU0 next to the NSS and Wi-Fi work. The NSS-to-host delivery
+  (`nss_queue1`, where the generic `nss-irq-affinity` sends every return
+  when a modem is present, assuming the modem itself is on CPU0) is moved to
+  the other CPU by the same hotplug script. Both cores then carry the same
+  load, as on the stock firmware: 10.4-10.9 -> 8.1-10.9 CPU-s/GB and the
+  busiest core 18 % -> 12-16 % over 5 GHz Wi-Fi at ~205 Mbit/s. Moving the
+  modem interrupt to CPU0 with RPS on `mhi_hwip0` instead (the stock
+  firmware's split) measured no better.
+
+Against the stock firmware, same cell and client, back to back, ~200 Mbit/s
+over Wi-Fi: stock 3.0.23 9.4 CPU-s/GB (12 % / 12 %), this branch 8.1-10.9
+(12-13 % / 12-16 %). Earlier figures that put this branch ~30 % ahead of
+the stock came from a load the stock firmware does not accelerate and are
+withdrawn.
 
 Over 5 GHz Wi-Fi with a phone speedtest (150-190 Mbit/s): raw-IP 21.0 s/GB
 with everything on CPU0, 19.5 with the interrupts on CPU1, 12.7 over QMAP
