@@ -2,38 +2,110 @@ From: Balázs Gyimesi <gyimesi.balazs@gmail.com>
 Subject: [PATCH] net: qualcomm: rmnet: size the deaggregated copies for buffer reuse
 
 An offload engine on the device's receive handler (Qualcomm NSS) keeps a
-packet's buffer as one of its own receive buffers if it is at least its
-receive buffer size, and frees a smaller one, allocating a new empty buffer
-in its place. Allocate the copies at that size (a module parameter,
-0 keeps the exact size).
+packet's buffer as one of its own receive buffers when the buffer's
+skb_end_offset() is at least its receive buffer size plus NET_SKB_PAD
+(cache-line aligned) and below PAGE_SIZE, and frees a smaller one,
+allocating a new empty buffer in its place. The exact copy of a full-MTU
+packet is a kmalloc-2048 head, which ends at 1728 bytes and never
+qualifies; a request of 1729 to 3776 bytes gives a kmalloc-4096 head
+ending at 3776, which does. Size the copies to deagg_min_alloc, 1792 by
+default, the boundary that arithmetic lands on; 0 keeps the exact size.
+The value is capped at the largest head that fits a page (SKB_MAX_HEAD(0),
+3776 on arm64): nothing larger can qualify, and a request kmalloc could
+not serve atomically would fail every copy and drop the rest of the
+aggregate without a counter, since the parameter is writable at run time.
+
+A sized-up copy costs a 4 KiB head and a cache clean of the engine's
+whole receive buffer when it is handed over, whatever the packet's size,
+which for a small packet is more than the buffer the engine saves. Only
+packets of at least deagg_reuse_min_len bytes, 1024 by default, are sized
+up. Measured with injected 512-byte packets, the exact copy of those took
+6-8 % fewer cycles per GB; with 1400-byte packets the sized copy keeps both
+CPUs evenly loaded where the exact one loads the receiving CPU up to 20
+points more.
 ---
 --- a/drivers/net/ethernet/qualcomm/rmnet/rmnet_map_data.c
 +++ b/drivers/net/ethernet/qualcomm/rmnet/rmnet_map_data.c
-@@ -17,6 +17,17 @@
+@@ -17,6 +17,73 @@
  #define RMNET_MAP_DEAGGR_SPACING  64
  #define RMNET_MAP_DEAGGR_HEADROOM (RMNET_MAP_DEAGGR_SPACING / 2)
  
-+/* An offload engine on the device's receive handler (Qualcomm NSS) keeps a
-+ * packet's buffer as one of its own receive buffers instead of handing it
-+ * back, if the buffer is at least its receive buffer size (1792 bytes plus
-+ * NET_SKB_PAD); a smaller one is returned and freed, and a new empty buffer
-+ * is allocated for the engine in its place. Size the copies for that; 0
-+ * keeps the exact size.
++/* An offload engine on the device's receive handler (Qualcomm NSS,
++ * nss_core_skb_can_reuse()) keeps a packet's buffer as one of its own
++ * receive buffers instead of handing it back when skb_end_offset() is at
++ * least SKB_DATA_ALIGN(buffer size + NET_SKB_PAD) and below PAGE_SIZE; its
++ * buffer size is 1984 bytes on the IPQ50xx at MTU 1500 (2048 for an MTU a
++ * little above that, which the heads below still pass), so a head from
++ * 2048 to 4095 bytes qualifies. A smaller one is returned, freed and
++ * replaced by a fresh page the engine allocates for its pool.
++ *
++ * alloc_skb() puts the 320-byte skb_shared_info (17 frags, arm64) at the
++ * end of the kmalloc object, so a kmalloc-2048 head ends at 1728 and never
++ * qualifies, whatever was requested: the exact copy of a full-MTU packet
++ * (1500 + 8 bytes of MAP headers + RMNET_MAP_DEAGGR_SPACING = 1572, i.e.
++ * 1600 + 320 = 1920 rounded up to a kmalloc-2048 object) lands there. The
++ * first request that leaves kmalloc-2048 is 1729 (aligned to 1792, + 320 =
++ * 2112 > 2048); from there up to 3776 the head is a kmalloc-4096 object
++ * ending at 3776, which qualifies, and above 3776 it is kmalloc-8192 and
++ * fails the PAGE_SIZE bound. deagg_min_alloc=0 keeps the exact size.
++ *
++ * A reusable copy costs 4 KiB whether or not the engine keeps it, and the
++ * ones it keeps are held on top of its pool for the duration of a burst
++ * (measured ~13k idle to ~23k during a download; rmnet_reuse_max in the NSS
++ * driver caps it). Measured with injected aggregates of 1400-byte packets,
++ * the reusable copy keeps both CPUs evenly loaded, where the exact one
++ * loads the receiving CPU up to 20 points more for a few percent fewer
++ * cycles per GB.
++ *
++ * Small packets are copied exactly in any case: a sized-up copy costs a
++ * 4 KiB head and a cache clean of the engine's whole receive buffer when it
++ * is handed over, whatever the packet's size, which for a small packet is
++ * more than the buffer the engine saves by keeping it (with 512-byte
++ * packets the exact copy took 6-8 % fewer cycles per GB). Only packets of
++ * at least deagg_reuse_min_len bytes, MAP headers included, are sized up;
++ * 0 sizes up every packet.
++ *
++ * deagg_min_alloc is capped at SKB_MAX_HEAD(0) (PAGE_SIZE - skb_shared_info,
++ * 3776 on arm64) when it is read: no larger head can qualify, and the
++ * parameter is writable at run time, so a value kmalloc could not serve
++ * atomically would otherwise fail every copy (kmalloc_reserve() allocates
++ * with __GFP_NOWARN) and make rmnet_map_ingress_handler() drop the rest of
++ * the aggregate without a counter.
 + */
-+static unsigned int rmnet_deagg_min_alloc = 1856;
++static unsigned int rmnet_deagg_min_alloc = 1792;
 +module_param_named(deagg_min_alloc, rmnet_deagg_min_alloc, uint, 0644);
-+MODULE_PARM_DESC(deagg_min_alloc, "minimum allocation of a deaggregated packet (0: exact)");
++MODULE_PARM_DESC(deagg_min_alloc, "minimum allocation of a deaggregated packet (0: exact; capped at the largest head that fits a page, 3776 on arm64)");
++
++static unsigned int rmnet_deagg_reuse_min_len = 1024;
++module_param_named(deagg_reuse_min_len, rmnet_deagg_reuse_min_len, uint, 0644);
++MODULE_PARM_DESC(deagg_reuse_min_len, "smallest deaggregated packet whose copy is sized up for buffer reuse (0: all)");
++
++/* rmnet_map_alloc_deagg_skb() - the skb a deaggregated packet is copied into
++ * @packet_len: MAP headers and payload, before the headroom
++ *
++ * The parameters are read once per call, as they can change under us.
++ */
++static struct sk_buff *rmnet_map_alloc_deagg_skb(unsigned int packet_len)
++{
++	unsigned int min_alloc = min_t(u32, READ_ONCE(rmnet_deagg_min_alloc),
++				       SKB_MAX_HEAD(0));
++	unsigned int len = packet_len + RMNET_MAP_DEAGGR_SPACING;
++
++	if (!min_alloc || packet_len < READ_ONCE(rmnet_deagg_reuse_min_len))
++		return alloc_skb(len, GFP_ATOMIC);
++
++	return alloc_skb(max_t(u32, len, min_alloc), GFP_ATOMIC);
++}
 +
  static __sum16 *rmnet_map_get_csum_field(unsigned char protocol,
  					 const void *txporthdr)
  {
-@@ -390,7 +401,8 @@
+@@ -390,7 +457,7 @@
  	if (!packet_len)
  		return NULL;
  
 -	skbn = alloc_skb(packet_len + RMNET_MAP_DEAGGR_SPACING, GFP_ATOMIC);
-+	skbn = alloc_skb(max_t(u32, packet_len + RMNET_MAP_DEAGGR_SPACING,
-+			       rmnet_deagg_min_alloc), GFP_ATOMIC);
++	skbn = rmnet_map_alloc_deagg_skb(packet_len);
  	if (!skbn)
  		return NULL;
  
