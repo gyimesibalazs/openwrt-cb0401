@@ -1,27 +1,14 @@
 #!/bin/sh
-# Xiaomi CB0401 / CB0401V2: the modem's QMAP links feed the NSS, which takes
-# the packets one by one from the device's receive handler (see
-# package/nss/qca-nss-drv patch 0150), so two things the stack does for a
-# host-bound device are set here for every link:
-# - GRO off: a segment GRO has merged can only go through the host stack, so
-#   with GRO on most of the downlink would be forwarded in software (measured
-#   31.5 CPU-s/GB with GRO, 11-17 without);
-# - RPS to the CPUs the modem's interrupts are not on: the MHI interrupts
-#   and the deaggregation run on the last CPU (cb0401v2-pcie-modem), the
-#   hand-off to the NSS then runs on the other one. Same CPU cost per GB as
-#   no RPS (12.1-12.5 vs 11.2-12.4 CPU-s/GB measured), but the loaded core
-#   drops from 11 % to 9 % at 90 Mbit/s, which lifts the ceiling by ~20 %.
-#   The NSS default RPS mask would steer to the last CPU instead, the one the
-#   packet is already on: a flow hash and a backlog queue per packet for
-#   nothing (18.9 CPU-s/GB instead of 12.7).
-# - the NSS-to-host delivery (nss_queue1, where nss-irq-affinity's pri_map
-#   sends every return when a modem is present) to the same CPUs: that
-#   script assumes the modem interrupt stays on CPU0 and puts the delivery
-#   on CPU1, but here the modem is on the last CPU. Both cores then carry
-#   the same load, as on the stock firmware, at less CPU per GB (measured
-#   over 5 GHz Wi-Fi at ~205 Mbit/s: 10.4-10.9 -> 8.1-9.4 CPU-s/GB, busiest
-#   core 18 % -> 12-13 %).
-# ModemManager creates a link per connection, so this runs on each one.
+# Xiaomi CB0401 / CB0401V2: ModemManager creates a QMAP link per connection.
+# Each needs GRO off and RPS away from the modem's core, and the NSS-to-host
+# delivery placed opposite the modem - cb0401v2-wwan-affinity (package
+# xiaomi-cb0401v2-modem) owns all of that, the measurements are there; it
+# also re-pins the modem's interrupts, so a reconnect after a modem reset
+# puts everything back. nss_queue1 and pri_map are not written here:
+# nss-irq-affinity, which that script ends with, is their only writer.
+# In the background: that step can wait on the NSS firmware (up to 6 s per
+# message when it does not answer), and the net hotplug events behind this
+# one must not.
 [ "$ACTION" = add ] || exit 0
 case "$DEVICENAME" in
 qmapmux*) ;;
@@ -30,17 +17,8 @@ esac
 . /lib/functions.sh
 case "$(board_name)" in
 xiaomi,cb0401|xiaomi,cb0401v2)
-	ethtool -K "$DEVICENAME" gro off >/dev/null 2>&1
-	ncpu=$(grep -c ^processor /proc/cpuinfo)
-	# all CPUs but the last, as a hex mask; a single CPU gets no RPS
-	mask=$(printf '%x' $(( (1 << (ncpu - 1)) - 1 )))
-	for q in /sys/class/net/"$DEVICENAME"/queues/rx-*/rps_cpus; do
-		[ -e "$q" ] && echo "$mask" > "$q"
-	done
-	[ "$mask" = 0 ] && exit 0
-	for irq in $(awk '$NF == "nss_queue1" { sub(/:/, "", $1); print $1 }' /proc/interrupts); do
-		echo "$mask" > /proc/irq/"$irq"/smp_affinity 2>/dev/null
-	done
+	[ -x /usr/sbin/cb0401v2-wwan-affinity ] &&
+		/usr/sbin/cb0401v2-wwan-affinity "$DEVICENAME" </dev/null >/dev/null 2>&1 &
 	;;
 esac
 exit 0

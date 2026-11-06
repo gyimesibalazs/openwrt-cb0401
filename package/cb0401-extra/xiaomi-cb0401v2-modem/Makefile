@@ -7,7 +7,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=xiaomi-cb0401v2-modem
-PKG_RELEASE:=2
+PKG_RELEASE:=3
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -24,16 +24,20 @@ define Package/xiaomi-cb0401v2-modem/description
   udev rules that make ModemManager build the RG520N-EB from its QRTR node
   and MHI data netdev (and leave its USB side to the AT tools), and a boot
   service that rescans PCIe until the modem, switched on after the PCIe
-  probe, shows up.
+  probe, shows up, then places the modem's interrupts and its QMAP links
+  on the core the NSS delivery is not on (cb0401v2-wwan-affinity, re-run
+  by the QMAP link hotplug).
 endef
 
 define Build/Compile
 endef
 
 define Package/xiaomi-cb0401v2-modem/install
-	$(INSTALL_DIR) $(1)/lib/udev/rules.d $(1)/etc/init.d
+	$(INSTALL_DIR) $(1)/lib/udev/rules.d $(1)/etc/init.d $(1)/usr/sbin $(1)/lib
 	$(INSTALL_DATA) ./files/78-mm-cb0401v2.rules $(1)/lib/udev/rules.d/
 	$(INSTALL_BIN) ./files/cb0401v2-pcie-modem.init $(1)/etc/init.d/cb0401v2-pcie-modem
+	$(INSTALL_BIN) ./files/cb0401v2-wwan-affinity $(1)/usr/sbin/
+	$(INSTALL_DATA) ./files/cb0401v2-modem.sh $(1)/lib/
 endef
 
 $(eval $(call BuildPackage,xiaomi-cb0401v2-modem))

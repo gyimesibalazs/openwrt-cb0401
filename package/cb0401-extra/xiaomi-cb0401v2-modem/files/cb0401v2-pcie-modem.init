@@ -17,8 +17,10 @@ start_service() {
 	procd_open_instance
 	procd_set_param command /bin/sh -c '
 		log() { logger -t cb0401v2-pcie-modem "$*"; }
+		. /lib/cb0401v2-modem.sh
+		dev=$CB0401_MODEM_PCI
 		n=0
-		while [ ! -d /sys/bus/pci/devices/0001:01:00.0 ]; do
+		while [ ! -d $dev ]; do
 			[ $n -lt 30 ] || { log "modem did not show up on PCIe1 within 120 s"; exit 1; }
 			echo 1 > /sys/bus/pci/rescan
 			sleep 4
@@ -26,21 +28,14 @@ start_service() {
 		done
 		log "modem on PCIe1 after $((n * 4)) s"
 
-		dev=/sys/bus/pci/devices/0001:01:00.0
 		n=0
 		while [ ! -e $dev/driver ] && [ $n -lt 30 ]; do sleep 1; n=$((n + 1)); done
 		echo on > $dev/power/control
 
-		# The GIC leaves every MHI interrupt on CPU0, where the NSS and
-		# Wi-Fi work lands too, and the modem receive path saturates
-		# that core at ~380 Mbit/s while CPU1 idles. Move the modem
-		# interrupts to the last CPU; measured: same CPU-s/GB, the busy
-		# core drops from ~54 % to ~19 % at the same rate.
-		last=$(( $(grep -c ^processor /proc/cpuinfo) - 1 ))
-		[ $last -gt 0 ] && for irq in $(grep 0001:01:00.0 /proc/interrupts | grep mhi | cut -d: -f1 | tr -d " "); do
-			echo $last > /proc/irq/$irq/smp_affinity_list 2>/dev/null
-		done
-		log "modem MHI interrupts on CPU$last"
+		# Modem interrupts on one core, NSS delivery on the other
+		# (cb0401v2-wwan-affinity owns both sides, the measurements
+		# are there; it is re-run on every QMAP link as well).
+		/usr/sbin/cb0401v2-wwan-affinity
 
 		n=0
 		while [ $n -lt 12 ]; do
