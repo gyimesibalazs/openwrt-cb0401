@@ -7,7 +7,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=xiaomi-cb0401v2-modem
-PKG_RELEASE:=3
+PKG_RELEASE:=4
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -38,6 +38,8 @@ define Package/xiaomi-cb0401v2-modem/install
 	$(INSTALL_BIN) ./files/cb0401v2-pcie-modem.init $(1)/etc/init.d/cb0401v2-pcie-modem
 	$(INSTALL_BIN) ./files/cb0401v2-wwan-affinity $(1)/usr/sbin/
 	$(INSTALL_DATA) ./files/cb0401v2-modem.sh $(1)/lib/
+	$(INSTALL_DIR) $(1)/etc/sysctl.d
+	$(INSTALL_DATA) ./files/13-cb0401-backlog.conf $(1)/etc/sysctl.d/
 endef
 
 $(eval $(call BuildPackage,xiaomi-cb0401v2-modem))
