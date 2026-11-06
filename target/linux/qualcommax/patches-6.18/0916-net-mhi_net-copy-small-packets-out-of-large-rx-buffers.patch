@@ -1,13 +1,30 @@
 From: Balázs Gyimesi <gyimesi.balazs@gmail.com>
 Subject: [PATCH] net: mhi_net: copy small packets out of large RX buffers
 
-With a large MRU (a modem sending aggregated QMAP frames, or ModemManager
-raising the MTU to 16 KiB in multiplex mode) every RX buffer is 16 KiB,
-and a plain 1.5 kB packet received into it carries a 16 KiB truesize. A
-TCP socket on the host is charged that for each packet, its receive
-window collapses, and a download on the router itself drops from
-~100 Mbit/s to ~7 Mbit/s while forwarded traffic is unaffected. Copy a
-small packet into a right-sized skb; aggregated frames stay as they are.
+With a large MRU (a modem sending aggregated QMAP frames) every RX buffer
+is the MRU's size, and a plain 1.5 kB packet received into it carries the
+whole buffer's truesize (over 32 KiB with the page backed buffers; the
+mhi_net MTU plays no part in the RX buffer size, only the controller's MRU
+does). A TCP socket on the host is charged that for each packet, its
+receive window collapses, and, measured with 16 KiB buffers, a download on
+the router itself dropped from ~100 Mbit/s to ~7 Mbit/s while forwarded
+traffic was unaffected. Copy a small packet into a right-sized skb;
+aggregated frames stay as they are.
+
+The copy is skipped when an rx_handler is registered on the device (rmnet
+on the QMAP link): rmnet's deaggregation already copies each packet out of
+the frame into a right-sized skb, so the stack never sees the large
+truesize, and a lone small packet would otherwise be copied twice.
+rcu_access_pointer() is enough: the callback runs in the MHI event tasklet
+with BH disabled, only the NULL/non-NULL state matters, and a stale read
+around rmnet's attach or detach costs one copy more or less for one packet.
+netdev_is_rx_handler_busy() cannot be used there (ASSERT_RTNL). The raw-IP
+mode (no rmnet) keeps the copybreak as before; with the page backed
+buffers the truesize test is always true, so that is the only mode the
+copy happens in. This assumes the rmnet link deaggregates
+(RMNET_FLAGS_INGRESS_DEAGGREGATION, which libqmi sets on every link it
+creates); a link created without that flag hands the whole buffer to the
+stack unchanged and would want the copy back.
 ---
 --- a/drivers/net/mhi_net.c
 +++ b/drivers/net/mhi_net.c
@@ -19,16 +36,22 @@ small packet into a right-sized skb; aggregated frames stay as they are.
  #define MHI_NET_MAX_MTU		0xffff
  #define MHI_NET_DEFAULT_MTU	0x4000
  
-@@ -207,6 +208,20 @@
+@@ -207,6 +208,26 @@
  			/* Aggregate the final fragment */
  			skb = mhi_net_skb_agg(mhi_netdev, skb);
  			mhi_netdev->skbagg_head = NULL;
 +		} else if (skb->len <= MHI_NET_COPYBREAK &&
-+			   skb->truesize > 2 * MHI_NET_COPYBREAK) {
++			   skb->truesize > 2 * MHI_NET_COPYBREAK &&
++			   !rcu_access_pointer(mhi_netdev->ndev->rx_handler)) {
 +			/* A large MRU (aggregated frames) with a small packet in
 +			 * it: hand the stack a right-sized copy, or every 1.5 kB
-+			 * packet charges a 16 kB truesize to the receiving socket
-+			 * and shrinks its window.
++			 * packet charges the whole buffer's truesize (32 KiB) to
++			 * the receiving socket and shrinks its window. Not when a
++			 * receive handler is attached (rmnet in QMAP mode): it
++			 * deaggregates by copying every packet into a right-sized
++			 * skb, so the copy here would only be a second one. (An
++			 * rmnet link without INGRESS_DEAGGREGATION passes the
++			 * buffer through as is; libqmi always sets the flag.)
 +			 */
 +			struct sk_buff *small = netdev_alloc_skb(mhi_netdev->ndev, skb->len);
 +
