@@ -36,8 +36,16 @@ updated with plain `sysupgrade`.
 - **lan1 and lan2**, both gigabit (lan2 is the SGMII port of the QCA8337
   switch).
 - **WiFi**: 5 GHz on the QCN9074 and 2.4 GHz on the IPQ5018 (ath11k).
-- **LEDs**: 4G or 5G while the WAN is up on it (slow blink on a weak
-  signal), WiFi while an AP is up.
+- **LEDs** (`cb0401v2-leds`): 4G or 5G while the WAN is up on it (slow
+  blink below RSRP -110 dBm), WiFi while an AP is up. The daemon checks
+  the WiFi and WAN link state every 10 s (sysfs and one ubus call, cheap)
+  but samples the modem's signal, one `mmcli` run that also sets
+  ModemManager's QMI polling rate, only every 30 s by default. With
+  `option signalrate` on the wwan interface (`network.wwan.signalrate`,
+  the modemmanager proto's own option) it keeps to that rate instead of
+  overriding it, so the weak-signal blink lags at most max(signalrate,
+  10) s. The value is picked up when the wwan interface next comes up
+  (`uci commit network && ifup wwan`, or `reload_config`).
 - **NFC**: the tag always holds the current WiFi credentials. Android phones
   join by touching the box; iOS cannot join from a tag, but it can open an
   optional URL record.
@@ -76,41 +84,154 @@ load, eight parallel downloads pulled through the router by a wired client
 at ~85 Mbit/s):
 
 - **QMAP** (`network.wwan.multiplex='required'`, set by a uci-default): the
-  modem aggregates up to 32 packets / 31744 bytes into one 32 KiB MHI
-  buffer (ModemManager asks for that on `mhi_net`, patch 0104; the MRU is
-  the kernel's, patch 0914), and `rmnet` splits the frame into one packet
-  per skb. Twice the stock frame size (15360 / 20 on a 16 KiB MRU) measured
-  16.0 -> 14.6 s/GB. `mhi_net` takes its buffers from pages (patch 0915)
-  and copies a lone small packet out of such a buffer (patch 0916), so that
-  a host-bound flow is not charged 32 KiB per packet.
+  modem aggregates up to 32 packets / 31744 bytes into one MHI receive
+  buffer (ModemManager asks for that on `mhi_net`, patch 0104), and `rmnet`
+  splits the frame into one packet per skb. Twice the stock frame size
+  (15360 / 20 on a 16 KiB MRU) measured 16.0 -> 14.6 s/GB. The receive
+  buffer's size is the MHI controller's MRU, 32256 bytes on this modem
+  (patch 0914; the 16 KiB MTU ModemManager sets on `mhi_net` has nothing to
+  do with it): the largest value whose buffer, with 128 bytes of DMA
+  headroom and the 320-byte `skb_shared_info`, still fits an order-3
+  (32 KiB) page block (128 + 32256 + 320 = 32704). The usual 32768 would
+  cost a 64 KiB block per buffer (~127 on the ring: 8 MiB instead of
+  4 MiB) and order-4 allocations, which the page allocator gives up on
+  sooner. On this kernel (SLUB, 4 KiB pages) vanilla `netdev_alloc_skb()`
+  is itself a page-allocator call at these sizes, with the same block
+  orders, so the value stands on its own; what patch 0915 changes is that
+  `mhi_net` asks for the block with GFP_KERNEL from its refill workqueue
+  (vanilla asks GFP_ATOMIC), gives it 128 instead of 64 bytes of headroom,
+  and returns it through the page-frag free path. With the 32256 MRU the
+  device's writes (offsets 128..32384 of the block) and the
+  `skb_shared_info` (at 32448) never share a cache line. The 31744-byte
+  frames asked of the modem fit even if the modem counts the MAP headers
+  on top (32 x 8 = 256 bytes). A board whose modem keeps the 32768 MRU
+  gets one informational line from `mhi_net` about order-4 buffers, and
+  nothing else changes for it. The 16.0 -> 14.6 figure was measured with
+  the 32768 MRU; the 32256 MRU is not yet measured, and no difference is
+  expected since the frames asked of the modem are the same. In raw-IP
+  mode (no `rmnet` on the device) `mhi_net` copies a lone small packet
+  out of such a buffer (patch 0916), so that a host-bound flow is not
+  charged 32 KiB per packet; on the QMAP link `rmnet` already copies every
+  deaggregated packet out into an skb of its own (patch 0918 sizes those
+  copies, see "Buffers the firmware keeps"), so `mhi_net`
+  skips its own copy when a receive handler is attached. That relies on
+  the link being created with `INGRESS_DEAGGREGATION`, which libqmi always
+  sets.
 - **Buffers the firmware keeps**: a packet handed to the NSS is offered as
   one of its own receive buffers (`package/nss/qca-nss-drv` patch 0150,
   module parameter `rmnet_reusable`), so it is not returned, freed and
-  replaced by a fresh allocation per packet; `rmnet` sizes its copies for
-  that (kernel patch 0918, `rmnet.deagg_min_alloc`). 14.6 -> ~12 s/GB. The
-  firmware holds the buffers for the duration of a burst (~10k, 40 MB, and
-  gives them back within a minute); above `rmnet_reuse_max` held it is
-  offered no more.
-- **Nothing in the way between rmnet and the NSS** (a hotplug script on
-  every QMAP link): GRO off, because a segment GRO merges can only be
-  forwarded by the host (the NSS bind handler leaves it there, patch 0150,
-  as the firmware returned such segments without their checksum state), and
-  with GRO on most of the downlink went that way (31.5 CPU-s/GB instead of
-  15); and RPS to the CPU the modem's interrupts are *not* on. The NSS
-  default RPS mask would steer every packet through a flow hash and a
-  backlog queue to the CPU it is already on (18.9 s/GB instead of 12.7 over
-  Wi-Fi); steering to the other CPU costs the same per GB as no RPS, but
-  the loaded core drops from 13 % to 9 % at 90 Mbit/s, ~20 % more ceiling.
-- **Interrupts**: the modem's MHI interrupts are moved to the last CPU at
-  boot (`cb0401v2-pcie-modem`); otherwise all of its receive work lands on
-  CPU0 next to the NSS and Wi-Fi work. The NSS-to-host delivery
-  (`nss_queue1`, where the generic `nss-irq-affinity` sends every return
-  when a modem is present, assuming the modem itself is on CPU0) is moved to
-  the other CPU by the same hotplug script. Both cores then carry the same
-  load, as on the stock firmware: 10.4-10.9 -> 8.1-10.9 CPU-s/GB and the
-  busiest core 18 % -> 12-16 % over 5 GHz Wi-Fi at ~205 Mbit/s. Moving the
-  modem interrupt to CPU0 with RPS on `mhi_hwip0` instead (the stock
-  firmware's split) measured no better.
+  replaced by a fresh allocation per packet; `rmnet` sizes its copies of
+  full-size packets so that they qualify (kernel patch 0918,
+  `rmnet.deagg_min_alloc`, default 1792; 0 turns the reuse off) and copies
+  small ones exactly (`rmnet.deagg_reuse_min_len`, default 1024 bytes). The
+  firmware holds the buffers for the duration of a burst (~10k, 40 MB in
+  the first measurement; patch 0150's own count ~13k held idle, ~23k
+  during a download, back within a minute); above `rmnet_reuse_max` held
+  it is offered no more.
+  - *What qualifies*: the NSS keeps a buffer whose `skb_end_offset()` is
+    at least 2048 (its 1984-byte receive buffer at MTU 1500 plus
+    `NET_SKB_PAD`, cache-line aligned; the buffer stays 1984 up to MTU
+    1522 and is 2048 from 1523 on, threshold 2112) and below one page.
+    `alloc_skb()` puts the 320-byte `skb_shared_info` at the end of the
+    kmalloc object, so a kmalloc-2048 head ends at 1728 and never
+    qualifies, whatever is asked for: the exact copy of a full-MTU packet
+    (1500 + 8 bytes of MAP headers + 64 spacing = 1572) lands there. Any
+    request from 1729 to 3776 gives a kmalloc-4096 head ending at 3776,
+    which qualifies at either threshold; `deagg_min_alloc` defaults to
+    1792, the alignment boundary at which the head first leaves
+    kmalloc-2048, and is capped at 3776 when read, since no larger head can
+    qualify and a value kmalloc could not serve would silently fail every
+    copy. Above 3776 the head is kmalloc-8192 and fails the page bound.
+  - *Cost*: a reusable copy is a 4 KiB head whether or not the firmware
+    keeps it (truesize 4352, against 2304 for the exact copy of a
+    full-MTU packet). The ones it keeps are held on top of its pool for
+    the duration of a burst, as kmalloc-4096 objects in order-3 slabs of
+    eight, bounded by `rmnet_reuse_max`. For a small packet the sized-up
+    copy is a loss: the 4 KiB head and the cache clean of the firmware's
+    whole receive buffer when it is handed over cost the same whatever
+    the packet's size, which is why packets under `deagg_reuse_min_len`
+    are copied exactly.
+  - *Measured* on 2026-11-05/06 with precise IRQ time accounting and the
+    PMU cycle counter (the earlier 14.6 -> ~12 s/GB came from tick-based
+    accounting, which on this kernel misses about a third of the softirq
+    time and scatters by +-1 s/GB), with a test injector feeding QMAP
+    aggregates of 1400-byte packets at 200-1300 Mbit/s, on one boot: the
+    sized copy with the preset flow hash (patch 0919) costs 9.8 / 9.6 /
+    11.8 Gcycles/GB at 400 / 800 / 1300 Mbit/s against 11.6 / 11.2 / 13.1
+    for the copy as it stood before, with both cores within 3 points of
+    each other (~75 % each at 1.3 Gbit/s instead of ~83 %); the exact,
+    never-reused copy (`deagg_min_alloc=0`) costs a few percent fewer
+    cycles but loads the receiving core up to 20 points more. With
+    512-byte packets the exact copy of small packets took 6-8 % fewer
+    cycles per GB on the same boot (17.9-21.4 against 19.1-23.3
+    Gcycles/GB). Over 40 minutes at 900 Mbit/s the free memory settled at
+    59 MB on a RAM-booted image, with no growth. On a live cell with a
+    cable client the sized copy measured 11.4 against 12.1 s/GB.
+- **Nothing in the way between rmnet and the NSS** (`cb0401v2-wwan-affinity`,
+  run on every QMAP link, see "Interrupts"): GRO off, because a segment GRO
+  merges can only be forwarded by the host (the NSS bind handler leaves it
+  there, patch 0150, as the firmware returned such segments without their
+  checksum state), and with GRO on most of the downlink went that way (31.5
+  CPU-s/GB instead of 15.3); and RPS to the CPU the modem's interrupts are
+  *not* on. The NSS default RPS mask would steer every packet through a
+  flow hash and a backlog queue to the CPU it is already on (18.9 s/GB
+  instead of 12.7 over Wi-Fi); steering to the other CPU costs the same per
+  GB as no RPS (12.1-12.5 vs 11.2-13.6), but the loaded core drops from
+  13 % to 9 % at 90 Mbit/s, ~20 % more ceiling. The receive backlog that
+  RPS feeds is 16384 packets on this board (`/etc/sysctl.d/13-cb0401-backlog.conf`,
+  package `xiaomi-cb0401v2-modem`, after the 4096 of 12-nss-networking.conf):
+  the receiving CPU sees short bursts of other work about every 44 s, and a
+  4-minute 260-420 Mbit/s download over Wi-Fi lost 13598 packets in two of
+  them at 4096, none at 16384 with 360-510 Mbit/s (2026-11-06). The price of GRO off falls
+  on the flows that end on the router itself (opkg, a speedtest run from
+  the box, LuCI): their segments reach the stack one by one instead of
+  merged, so they cost more CPU per byte than they would with GRO. How
+  much, on this box, is not yet measured; those flows are a small part of a
+  CPE's traffic, and the forwarded path is where the 31.5 -> 15.3 came
+  from.
+- **Interrupts**: two scripts share the placement, each the only writer
+  of its side, so the end state is the same whichever of the NSS bring-up,
+  the modem bring-up and a link add runs last: the modem's MSI vectors on
+  CPU1; `nss_queue1`, the N2H `pri_map` and the QMAP links' RPS on CPU0.
+  `cb0401v2-wwan-affinity` (package `xiaomi-cb0401v2-modem`, `/usr/sbin`)
+  owns the modem side: it pins the RG520N's MHI MSI vectors
+  (`/sys/bus/pci/devices/0001:01:00.0/msi_irqs/`, `bhi` and `mhi` alike)
+  to the last CPU, sets GRO off and RPS "all CPUs but the last" on every
+  QMAP link, then runs `nss-irq-affinity`. `cb0401v2-pcie-modem` runs it
+  once the driver is bound, `hotplug.d/net/30-cb0401-rmnet-link` on every
+  `qmapmux*` link ModemManager creates (so a reconnect after a modem reset
+  puts everything back), and it can be run by hand (no arguments: every
+  existing `qmapmux*` link); the hotplug runs it in the background, as its
+  last step can wait on the NSS firmware. It re-pins only the vectors not
+  already on the last CPU, skips the one vector MSI allocates but the
+  controller never requests (8 allocated, 7 used, no `/proc/irq` entry) and
+  logs only what it moved. Without the pin all of the modem's
+  receive work lands on CPU0 next to the NSS and Wi-Fi work: with it, the
+  same CPU-s/GB and the busy core ~54 % -> ~19 % at the same rate.
+  `nss-irq-affinity` (package `nss-tools`, run by the NSS bring-up after
+  every arm as well) is the only writer of `nss_queue1` and the N2H
+  `pri_map`. Its runs are serialized with `flock`, so one that
+  read the modem's core before a pin cannot overwrite a newer one. With a modem on a two-core SoC it sends all four `pri_map`
+  priorities to queue 1 and places `nss_queue1` on the core the modem's
+  interrupts are *not* on, read from the effective affinity of the modem's
+  MSI vectors (0 when there is nothing to read, e.g. a USB modem), or from
+  `nss.general.modem_cpu` when that names a CPU the board has (ignored with
+  a log line otherwise; not needed on the CB0401). It is idempotent down
+  to the firmware: `dev.nss.rps.enable` and `pri_map` are read first and
+  written only when they differ, so the reconnect-time hotplug calls send
+  nothing to the firmware; before the NSS plane is armed, or while the
+  core is still booting, it does nothing and says so, and the NSS bring-up
+  runs it again after the arm (that run is the only one that waits for
+  ath11k's copy engines, `NSS_IRQ_WAIT_CE=1`). Both cores then carry the
+  same load, as on the stock firmware: 10.4-10.9 -> 8.1-10.9 CPU-s/GB and
+  the busiest core 18 % -> 12-16 % over 5 GHz Wi-Fi at ~205 Mbit/s. Moving
+  the modem interrupt to CPU0 with RPS on `mhi_hwip0` instead (the stock
+  firmware's split) measured no better. Until now the hotplug script wrote
+  `nss_queue1` itself while `nss-irq-affinity` assumed the modem on CPU0,
+  so an NSS re-arm after the link existed (`/etc/init.d/nss restart`, the
+  wedge watch's recovery) put the delivery back on the modem's core, and
+  the modem pin was one-shot, so a re-probe could leave the interrupts on
+  CPU0 with RPS steering there too (the 18.9 s/GB case). Both are gone.
 
 Against the stock firmware, same cell and client, back to back, ~200 Mbit/s
 over Wi-Fi: stock 3.0.23 9.4 CPU-s/GB (12 % / 12 %), this branch 8.1-10.9
