@@ -1,0 +1,38 @@
+From: Balázs Gyimesi <gyimesi.balazs@gmail.com>
+Subject: [PATCH] net: qualcomm: rmnet: preset the flow hash of deaggregated packets
+
+RPS asks every packet for its flow hash before it looks at the CPU map, so
+a link whose RPS mask holds one CPU still pays for dissecting the headers
+and siphashing them, about 2 % of the samples in a forwarding profile, and
+the result chooses nothing. Give the deaggregated copy a fixed software hash
+so skb_get_hash() returns at once. deagg_preset_hash=0 restores the old
+behaviour, for a link that spreads over several CPUs.
+---
+--- a/drivers/net/ethernet/qualcomm/rmnet/rmnet_map_data.c
++++ b/drivers/net/ethernet/qualcomm/rmnet/rmnet_map_data.c
+@@ -84,6 +84,15 @@
+ 	return alloc_skb(max_t(u32, len, min_alloc), GFP_ATOMIC);
+ }
+ 
++/* The QMAP links steer to a single CPU, so the flow hash RPS asks for chooses
++ * nothing, yet dissecting the headers and siphashing them is paid per packet
++ * in get_rps_cpu(). A software hash set here skips both. Nothing else on this
++ * path reads it: the offload engine and the stack hash on their own terms.
++ */
++static bool rmnet_deagg_preset_hash = true;
++module_param_named(deagg_preset_hash, rmnet_deagg_preset_hash, bool, 0644);
++MODULE_PARM_DESC(deagg_preset_hash, "give deaggregated packets a fixed software flow hash, for links that steer to one CPU");
++
+ static __sum16 *rmnet_map_get_csum_field(unsigned char protocol,
+ 					 const void *txporthdr)
+ {
+@@ -461,6 +470,9 @@
+ 	if (!skbn)
+ 		return NULL;
+ 
++	if (READ_ONCE(rmnet_deagg_preset_hash))
++		__skb_set_sw_hash(skbn, 1, false);
++
+ 	skbn->dev = skb->dev;
+ 	skb_reserve(skbn, RMNET_MAP_DEAGGR_HEADROOM);
+ 	skb_put(skbn, packet_len);
