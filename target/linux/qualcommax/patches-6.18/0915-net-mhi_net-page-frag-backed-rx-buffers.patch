@@ -1,29 +1,61 @@
 From: Balázs Gyimesi <gyimesi.balazs@gmail.com>
 Subject: [PATCH] net: mhi_net: page backed RX buffers
 
-Allocate the RX buffers as pages with build_skb() instead of
-netdev_alloc_skb(), which falls back to kmalloc above a page: a 16 KiB
-buffer holding an aggregated QMAP frame is then head_frag memory, so the
-deaggregating consumer (rmnet) can hand out the packets in it by page
-reference instead of copying each one. Each buffer gets pages of its own
-rather than a slice of the shared page-frag cache, since it is a DMA
-target.
+A 32 KiB MRU makes netdev_alloc_skb() fall back to kmalloc (the size is
+above SKB_WITH_OVERHEAD(PAGE_SIZE), 3776 bytes on arm64), and above
+KMALLOC_MAX_CACHE_SIZE (8 KiB with 4 KiB pages) kmalloc() is itself a
+page allocator call: netdev_alloc_skb(32768) asks for SKB_HEAD_ALIGN(32768
++ NET_SKB_PAD) = 33152 bytes, an order-4 (64 KiB) block, and asks for it
+with GFP_ATOMIC although the refill runs in a workqueue. Allocate the
+block directly and build the skb around it with build_skb() instead: with
+GFP_KERNEL, so an order-3 refill may reclaim and compact instead of
+failing, and sized for 128 bytes of headroom (ARCH_DMA_MINALIGN, so
+skb->data is on a DMA cache-line boundary), the MRU rounded up to 128,
+and skb_shared_info (320 bytes on arm64 with 17 frags, SKB_DATA_ALIGN'd).
+The block is handed back through the page-frag path (head_frag,
+skb_free_frag) when the skb is freed. For the MRU this driver runs with
+here (32256, the pci_generic table entry) that is 128 + 32256 + 320 =
+32704 bytes, an order-3 (32 KiB) block; an MRU of 32768 would need an
+order-4 (64 KiB) block with half of it unused, and order 4 is above
+PAGE_ALLOC_COSTLY_ORDER, so the refill would also be the kind of
+allocation the page allocator gives up on sooner. The 16 KiB MRU this
+patch was first written for was an order-3 block as well (16832 bytes),
+half of it unused.
+
+For the 32256-byte MRU the device writes offsets 128..32384 of the 32 KiB
+block and build_skb() puts skb_shared_info at 32448 (the block's end minus
+320), so the DMA and the metadata the CPU writes never share a cache
+line (the same holds for any MRU: the block is sized with the whole
+skb_shared_info after the DMA-aligned payload).
+
+Each buffer gets a block of its own rather than a slice of the shared
+page-frag cache, since it is a DMA target. The consumer on the QMAP link
+(rmnet) copies the packets out of the frame anyway, so whether the frame
+is page backed makes no difference to it.
 ---
 --- a/drivers/net/mhi_net.c
 +++ b/drivers/net/mhi_net.c
-@@ -265,6 +265,43 @@
+@@ -265,6 +265,65 @@
  		netif_wake_queue(ndev);
  }
  
 +/* headroom of an RX buffer, a whole DMA cache line */
 +#define MHI_NET_RX_PAD		ARCH_DMA_MINALIGN
 +
-+/* A page backed buffer (head_frag), so that a consumer of an aggregated
-+ * frame (rmnet deaggregation) can reference the packets in it instead of
-+ * copying them out; netdev_alloc_skb() would use kmalloc above a page. The
-+ * buffer gets pages of its own rather than a slice of the shared page-frag
-+ * cache: it is a DMA target, and the cache would hand the rest of its page
-+ * to allocations the CPU is writing while the device fills ours.
++/* A page block of its own for every RX buffer, built into an skb with
++ * build_skb(). netdev_alloc_skb() uses kmalloc above a page, and kmalloc
++ * above 8 KiB is a page-allocator call: for a 32 KiB MRU
++ * SKB_HEAD_ALIGN(32768 + NET_SKB_PAD) = 33152 bytes is an order-4 (64 KiB)
++ * block, requested GFP_ATOMIC from a workqueue. Here the block is asked
++ * for with GFP_KERNEL and holds 128 bytes of headroom (ARCH_DMA_MINALIGN:
++ * skb->data on a DMA cache-line boundary), the MRU rounded up to 128, and
++ * skb_shared_info (320 bytes on arm64, SKB_DATA_ALIGN'd): e.g. 32704 bytes
++ * for a 32256-byte MRU, an order-3 (32 KiB) block, in which the device's
++ * writes (offsets 128..32384) and skb_shared_info (at 32448) never share
++ * a cache line. Freed through the page-frag path
++ * (head_frag). Not a slice of the shared page-frag cache: the buffer is a
++ * DMA target, and the cache would hand the rest of its page to
++ * allocations the CPU is writing while the device fills ours.
 + */
 +static struct sk_buff *mhi_net_alloc_rx_skb(struct net_device *ndev,
 +					    unsigned int size)
@@ -35,8 +67,22 @@ target.
 +
 +	truesize = ALIGN(MHI_NET_RX_PAD + size, ARCH_DMA_MINALIGN) +
 +		   SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
++	/* 3 for an MRU up to 32256; 32768 (the usual pci_generic default)
++	 * already needs order 4, a 64 KiB block with half of it unused, and
++	 * a costly-order allocation. Not an error, vanilla would allocate
++	 * the same block, so just note it.
++	 */
 +	order = get_order(truesize);
-+	page = alloc_pages(GFP_KERNEL | __GFP_COMP | __GFP_NOWARN, order);
++	if (unlikely(order > PAGE_ALLOC_COSTLY_ORDER))
++		netdev_info_once(ndev, "RX buffers are order-%u (%lu-byte) blocks for an MRU of %u, above the %lu-byte costly-order limit\n",
++				 order, PAGE_SIZE << order, size,
++				 PAGE_SIZE << PAGE_ALLOC_COSTLY_ORDER);
++	/* Not worth reclaim retries or the OOM killer, which an order-3 request
++	 * would otherwise risk (it is not a costly order): the caller stops
++	 * refilling and tries again shortly.
++	 */
++	page = alloc_pages(GFP_KERNEL | __GFP_COMP | __GFP_NOWARN | __GFP_NORETRY,
++			   order);
 +	if (unlikely(!page))
 +		return NULL;
 +
@@ -55,7 +101,7 @@ target.
  static void mhi_net_rx_refill_work(struct work_struct *work)
  {
  	struct mhi_net_dev *mhi_netdev = container_of(work, struct mhi_net_dev,
-@@ -278,7 +315,7 @@
+@@ -278,7 +337,7 @@
  	size = mhi_netdev->mru ? mhi_netdev->mru : READ_ONCE(ndev->mtu);
  
  	while (!mhi_queue_is_full(mdev, DMA_FROM_DEVICE)) {

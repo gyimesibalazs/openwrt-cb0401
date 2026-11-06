@@ -11,6 +11,17 @@ firmware stops sending.
 Run the IP_HW0 channels without burst mode for this ID combination, so
 every queued element rings the doorbell.
 
+The MRU is 32256 rather than the usual 32768: the largest value whose RX
+buffer, with its headroom and skb_shared_info, still fits an order-3 (32
+KiB) page block (see the mhi_net page-buffer patch: 128 + 32256 rounded to
+128, plus 320 = 32704 <= 32768, where 32768 needs an order-4, 64 KiB
+block for every one of the ~127 buffers on the ring). The modem's
+aggregated frames are capped at 31744 bytes (ModemManager asks for that
+on mhi_net) and fit. The vanilla allocator ends up with the same block
+sizes: kmalloc above 8 KiB (KMALLOC_MAX_CACHE_SIZE with 4 KiB pages) goes
+to the page allocator, so netdev_alloc_skb(32768) is an order-4 block and
+32256 an order-3 one; the value is right with or without the mhi_net
+patch.
 
 On 6.18 the channel table takes MHI_CHANNEL_CONFIG_HW_NOBRST from the
 RM500Q-AE fix (pending 936), and the IPCR downlink follows the sdx65 table
@@ -18,7 +29,7 @@ without autoqueue.
 ---
 --- a/drivers/bus/mhi/host/pci_generic.c
 +++ b/drivers/bus/mhi/host/pci_generic.c
-@@ -527,6 +527,50 @@
+@@ -527,6 +527,55 @@
  	.sideband_wake = true,
  };
  
@@ -62,14 +73,19 @@ without autoqueue.
 +	.config = &modem_quectel_rg520n_xiaomi_config,
 +	.bar_num = MHI_PCI_DEFAULT_BAR_NUM,
 +	.dma_data_width = 32,
-+	.mru_default = 32768,
++	/* largest MRU whose page backed RX buffer (mhi_net: 128 bytes of
++	 * headroom, the MRU rounded up to 128, 320 bytes of skb_shared_info)
++	 * still fits an order-3 (32 KiB) block: 128 + 32256 + 320 = 32704.
++	 * 32768 would need order 4 (64 KiB per buffer, ~127 of them). The
++	 * modem is asked for 31744-byte frames (ModemManager), which fit. */
++	.mru_default = 32256,
 +	.sideband_wake = false,
 +};
 +
  static const struct mhi_channel_config mhi_foxconn_sdx55_channels[] = {
  	MHI_CHANNEL_CONFIG_UL(0, "LOOPBACK", 32, 0),
  	MHI_CHANNEL_CONFIG_DL(1, "LOOPBACK", 32, 0),
-@@ -982,6 +1026,9 @@
+@@ -982,6 +1031,9 @@
  	/* Foxconn T99W696, all variants */
  	{ PCI_DEVICE_SUB(PCI_VENDOR_ID_QCOM, 0x0308, PCI_VENDOR_ID_FOXCONN, PCI_ANY_ID),
  		.driver_data = (kernel_ulong_t) &mhi_foxconn_t99w696_info },
