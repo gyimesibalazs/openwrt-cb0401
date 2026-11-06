@@ -6,7 +6,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=nss-tools
-PKG_RELEASE:=23
+PKG_RELEASE:=24
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -140,7 +140,10 @@ define Package/nss-tools-dwmac/install
 	$(INSTALL_DIR) $(1)/lib/nss
 	$(INSTALL_DATA) ./files/functions.sh $(1)/lib/nss/functions.sh
 	$(INSTALL_DIR) $(1)/etc/sysctl.d
-	$(INSTALL_DATA) ./files/nss.sysctl $(1)/etc/sysctl.d/12-nss-networking.conf
+	# The IPQ50xx has two cores: mask e names cores it lacks, so the write
+	# failed at every boot, though the kernel still set the bit it has (2,
+	# core 1). Write that value outright: same mask, no error.
+	sed -e 's/^net.core.rps_default_mask=e *$$$$/net.core.rps_default_mask=2/' ./files/nss.sysctl > $(1)/etc/sysctl.d/12-nss-networking.conf
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
 	$(INSTALL_DATA) ./files/nss-offload.defaults $(1)/etc/uci-defaults/98-nss-offload
 	$(INSTALL_DATA) ./files/nss-dwmac.defaults $(1)/etc/uci-defaults/99-nss-topology
