@@ -34,6 +34,32 @@ nss_mesh_state() {
 	return 0
 }
 
+# nss_modem_pci_devs: the PCIe functions bound to an MHI modem driver, one
+# sysfs path per line. By driver, not by an "mhi" interrupt: ath11k on PCIe
+# (QCN9074) runs over MHI too, but binds ath11k_pci. Quectel's vendor
+# pcie_mhi registers as mhi or mhi_q depending on the version.
+nss_modem_pci_devs() {
+	local d
+	for d in /sys/bus/pci/drivers/mhi-pci-generic/0* \
+		/sys/bus/pci/drivers/mhi_q/0* \
+		/sys/bus/pci/drivers/mhi/0*; do
+		[ -e "$d" ] && echo "$d"
+	done
+}
+
+# nss_pci_irqs <sysfs device path>: the MSI vectors of that device that are
+# in use, one per line. msi_irqs/ lists every vector allocated, and MSI
+# allocates a power of two (the MHI controller asks for 8 and requests 7);
+# /proc/irq/N only exists once a vector has been requested, so the unused
+# ones have no affinity to read or to set.
+nss_pci_irqs() {
+	local f irq
+	for f in "$1"/msi_irqs/*; do
+		irq="${f##*/}"
+		[ -d "/proc/irq/$irq" ] && echo "$irq"
+	done
+}
+
 # poll_until <seconds> <command...>: run the command once per second until
 # it succeeds or the timeout elapses; returns the last status.
 poll_until() {

@@ -427,9 +427,12 @@ sqm_start_missed
 # Everything is registered by now - the NSS queues at the arm, the copy
 # engines at ath11k probe - so this is the first moment the interrupts
 # can be placed on the two cores. See the script for why the driver's
-# own version of it cannot do the job here.
+# own version of it cannot do the job here. NSS_IRQ_WAIT_CE lets it wait
+# a few seconds for the copy engines, which may still be probing; only
+# this caller asks for that, a hotplug calling the same script must not
+# stall.
 if [ -x /usr/sbin/nss-irq-affinity ]; then
-  /usr/sbin/nss-irq-affinity || echo "WARN: interrupt placement failed"
+  NSS_IRQ_WAIT_CE=1 /usr/sbin/nss-irq-affinity || echo "WARN: interrupt placement failed"
 fi
 
 # One-shot state dump for the boot log - what the data plane looks like

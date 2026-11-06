@@ -23,7 +23,15 @@
 #          (~1000/s against ~15/s for the trunk's own interrupt)
 #   CPU1   nss_queue1 and the copy engines of both radios
 #
-# With a modem the N2H delivery moves to CPU1 instead (see the end).
+# With a modem the whole N2H delivery goes to nss_queue1 instead, and
+# nss_queue1 to the core the modem's interrupts are NOT on (see the end).
+# The modem's core is nss.general.modem_cpu when set, otherwise it is
+# read off the modem's own interrupts, and 0 when there is nothing to
+# read. Reading it at run time is what lets this be the one and only
+# writer of nss_queue1 and pri_map: a board script that moves the modem's
+# interrupts just calls this afterwards, and whichever of the NSS
+# bring-up, the modem's bring-up and a link hotplug runs last, the result
+# is the same.
 #
 # Firmware RPS has to be on for queue1 to carry anything at all: it is
 # the firmware that hashes host-terminated flows across the N2H queues,
@@ -35,6 +43,14 @@
 # Interrupts left at the default (CPU0) on purpose: the trunk GMAC, whose
 # data path belongs to the firmware, and the ath11k ring interrupts,
 # which under wifili carry monitor/PPDU housekeeping only.
+#
+# Idempotent, and safe to run at any time: before the arm there is
+# nothing to place and it says so and exits 0, and what the firmware has
+# already been told is not sent again (each of those writes is a message
+# the driver blocks on until the ACK, see below). The wait for ath11k's
+# copy engines is only taken when the caller asks for it
+# (NSS_IRQ_WAIT_CE=1, the NSS bring-up): a call from a hotplug must not
+# stall on it.
 
 . /lib/nss/functions.sh
 
@@ -71,52 +87,13 @@ ncpus() {
 	echo "$n"
 }
 
-[ "$(uci -q get nss.general.enable_rps)" = 0 ] && exit 0
-[ "$(ncpus)" -ge 2 ] || exit 0
-
-# The N2H queues are only worth spreading once the firmware fans out to
-# them; without this, queue1 stays at zero and the second core idles.
-sysctl -qw dev.nss.rps.enable=1 2>/dev/null ||
-	log "WARN: dev.nss.rps.enable is not there - is qca-nss-drv loaded?"
-
-PINNED=""
-pin nss_queue0 0 || log "WARN: no nss_queue0 interrupt - the NSS core is not up"
-pin nss_empty_buf_sos 0
-pin nss_empty_buf_queue 0
-pin nss_queue1 1
-
-# ath11k registers its copy engines during probe, a moment after the
-# modprobe in nss-dwmac-up returns.
-have_ce() { [ -n "$(irq_list ce1)" ]; }
-if poll_until 5 have_ce; then
-	pin ce1 1
-	pin ce2 1
-	pin ce3 1
-else
-	log "no Wi-Fi copy engines to place (ath11k not loaded)"
-fi
-
-# A modem's receive interrupt (MHI on PCIe, xHCI for USB) stays on CPU0,
-# where it is that core's heaviest load. Firmware RPS hashes flows that
-# end on the host, and the modem path's raw-IP returns are not hashed at
-# all: on a D50 nss_queue0 took 4.9M interrupts against 268k on
-# nss_queue1, so every return lands on CPU0 next to the modem. pri_map
-# sends all four priorities to core 1, which moves the whole N2H delivery
-# to CPU1. Busiest core on the D50 (MBIM modem, ~170 Mbit/s): ~19% ->
-# ~16.5%, same speeds, no drops. pri_map resets with the NSS core, and
-# this runs after every bring-up.
-#
-# The modem is found by its driver, not by an "mhi" interrupt: ath11k on
-# PCIe (QCN9074) runs over MHI too, but binds ath11k_pci. Quectel's
-# vendor pcie_mhi registers as mhi or mhi_q depending on the version,
-# and qmi_wwan_q is its vendor USB driver. The check runs once per
-# bring-up: a USB modem plugged in after it is not seen until the next.
+# A modem bound on PCIe, or a USB one: qmi_wwan_q is Quectel's vendor USB
+# driver. The check runs once per call: a USB modem plugged in after it is
+# not seen until the next.
 have_modem() {
 	local d
-	for d in /sys/bus/pci/drivers/mhi-pci-generic/0* \
-		/sys/bus/pci/drivers/mhi_q/0* \
-		/sys/bus/pci/drivers/mhi/0* \
-		/sys/bus/usb/drivers/qmi_wwan/*:* \
+	[ -n "$(nss_modem_pci_devs)" ] && return 0
+	for d in /sys/bus/usb/drivers/qmi_wwan/*:* \
 		/sys/bus/usb/drivers/qmi_wwan_q/*:* \
 		/sys/bus/usb/drivers/cdc_mbim/*:* \
 		/sys/bus/usb/drivers/option/*:*; do
@@ -125,15 +102,185 @@ have_modem() {
 	return 1
 }
 
-if [ "$(ncpus)" = 2 ] && have_modem; then
-	n2h=1
-	for p in 0 1 2 3; do
-		echo "$p 1" > /proc/sys/dev/nss/rps/pri_map 2>/dev/null || n2h=0
+# The MSI vectors in use of every PCIe modem bound to an MHI driver.
+# Independent of how /proc/interrupts spells the chip name. A USB modem
+# shares the host controller's interrupt: not listed.
+modem_irqs() {
+	local d
+	for d in $(nss_modem_pci_devs); do
+		nss_pci_irqs "$d"
 	done
-	if [ "$n2h" = 1 ]; then
-		PINNED="$PINNED n2h->1"
+}
+
+# The core the modem's interrupts fire on. nss.general.modem_cpu names it
+# outright (a USB modem, or a board that wants it fixed) when it is a CPU
+# this board has; otherwise it is read off the interrupts themselves - the
+# effective affinity, the one core the GIC delivers to - and is 0, the
+# GIC's default, when there is nothing to read. Vectors spread over
+# several cores are not a placement this script knows: it then takes 0,
+# the pre-modem_cpu behaviour.
+modem_cpu() {
+	local cpu irq c
+	cpu="$(uci -q get nss.general.modem_cpu)"
+	case "$cpu" in
+	[0-9]|[1-9][0-9])
+		if [ "$cpu" -lt "$(ncpus)" ]; then
+			echo "$cpu"
+			return 0
+		fi
+		log "nss.general.modem_cpu=$cpu is not a CPU here - reading the interrupts instead"
+		;;
+	esac
+	cpu=''
+	for irq in $(modem_irqs); do
+		c="$(cat "/proc/irq/$irq/effective_affinity_list" 2>/dev/null)" ||
+			c="$(cat "/proc/irq/$irq/smp_affinity_list" 2>/dev/null)"
+		case "$c" in
+		''|*[!0-9]*) c=0 ;;
+		esac
+		if [ -z "$cpu" ]; then
+			cpu="$c"
+		elif [ "$cpu" != "$c" ]; then
+			log "modem interrupts on several cores (irq $irq on cpu $c, others on $cpu) - taking cpu 0"
+			cpu=0
+			break
+		fi
+	done
+	echo "${cpu:-0}"
+}
+
+[ "$(uci -q get nss.general.enabled)" = 0 ] && exit 0
+[ "$(uci -q get nss.general.enable_rps)" = 0 ] && exit 0
+[ "$(ncpus)" -ge 2 ] || exit 0
+
+# One at a time: the NSS bring-up, the modem's bring-up and a link hotplug
+# can overlap at boot, and a run that read the modem's core before a pin and
+# wrote nss_queue1 after a newer run would leave the older answer in place.
+# Reading and writing under one lock makes the last run to start the one
+# that counts. Without a lock (no flock, /var/run not there yet) it goes on;
+# the directory is tested first, a failed redirect on exec ends the script.
+if command -v flock >/dev/null 2>&1 && [ -d /var/run ]; then
+	exec 9>/var/run/nss-irq-affinity.lock
+	flock 9
+fi
+
+# Nothing to place before the arm - the queue interrupts are registered
+# when the core boots. The modem's bring-up and the QMAP link hotplug call
+# this too, possibly earlier than that: do nothing then, the NSS bring-up
+# runs it again once the queues exist.
+if [ -z "$(irq_list nss_queue0)" ]; then
+	log "no nss_queue0 interrupt - the NSS core is not up, nothing to place"
+	exit 0
+fi
+
+# Everything under dev.nss.rps is a message to the firmware: the driver
+# sends it on every write, a changed value or not, and blocks until the
+# ACK (nss_rps.c nss_rps_cfg / nss_rps_pri_map_cfg, NSS_CONN_CFG_TIMEOUT
+# = 6 s each), and whether the firmware treats a repeated RPS enable as a
+# no-op is not known (its own note says the N2H queues are not flushed).
+# This runs on every QMAP link add now, on a live plane, so the state is
+# read first and only what differs is written: a re-run sends nothing.
+# The write's exit status says nothing - the handler returns the driver's
+# own status code, which the sysctl layer hands back as a byte count - so
+# the state is read back afterwards; the driver restores the old value
+# when the firmware refuses or does not answer. The read-back is the
+# driver's copy, which is the firmware's too: the plane is never detached
+# within a boot (nss-dwmac stop), and a firmware crash panics.
+NSS_RPS=/proc/sys/dev/nss/rps
+rps_enabled() { [ "$(cat $NSS_RPS/enable 2>/dev/null)" = 1 ]; }
+# "Cores: a b c d " as nss_rps_pri_map_print writes it, one core per
+# priority 0..3.
+pri_map_is() {
+	case "$(cat $NSS_RPS/pri_map 2>/dev/null)" in
+	"Cores: $1 "*) return 0 ;;
+	esac
+	return 1
+}
+
+# The N2H queues are only worth spreading once the firmware fans out to
+# them; without this, queue1 stays at zero and the second core idles.
+# The queue interrupts exist from the driver's probe on, but the firmware
+# only takes messages once the core reports INITIALIZED (nss_core.c
+# "message dropped as core not ready"); a call from the modem side can
+# land in between. Nothing is lost then: the NSS bring-up runs this again
+# after the core is up.
+FW=1
+if [ ! -e $NSS_RPS/enable ]; then
+	log "WARN: dev.nss.rps.enable is not there - is qca-nss-drv loaded?"
+	FW=0
+elif ! rps_enabled; then
+	echo 1 > $NSS_RPS/enable 2>/dev/null
+	if ! rps_enabled; then
+		log "the NSS core is not ready yet - the bring-up places the N2H delivery"
+		FW=0
+	fi
+fi
+
+# A modem's receive interrupt (MHI on PCIe, xHCI for USB) is that core's
+# heaviest load wherever it is. Firmware RPS hashes flows that end on the
+# host, and the modem path's raw-IP returns are not hashed at all: on a
+# D50 nss_queue0 took 4.9M interrupts against 268k on nss_queue1, so
+# every return lands on queue0's core next to the modem. pri_map (below)
+# sends all four priorities to queue 1, which moves the whole N2H
+# delivery to nss_queue1, and nss_queue1 goes to the core the modem is
+# not on. Two measured placements agree on that one rule and differ only
+# in where the modem is: D50 (RM500Q over PCIe/MBIM, its MHI interrupts
+# left on CPU0, ~170 Mbit/s), queue1 on CPU1, busiest core ~19% ->
+# ~16.5%, same speeds, no drops (commit f4764cdec1); CB0401 (RG520N over
+# PCIe, MHI pinned to CPU1 by its board script), queue1 on CPU0, over
+# 5 GHz Wi-Fi at ~205 Mbit/s
+# 10.4-10.9 -> 8.1-10.9 CPU-s/GB, busiest core 18% -> 12-16%, both cores
+# evenly loaded as on the stock firmware (commit c4facf0352). Settled
+# before the pins, because queue1's own placement depends on it.
+MODEM=0
+MCPU=0
+Q1CPU=1
+if [ "$(ncpus)" = 2 ] && have_modem; then
+	MODEM=1
+	MCPU="$(modem_cpu)"
+	[ "$MCPU" = 1 ] && Q1CPU=0
+fi
+
+PINNED=""
+pin nss_queue0 0
+pin nss_empty_buf_sos 0
+pin nss_empty_buf_queue 0
+pin nss_queue1 "$Q1CPU"
+
+# ath11k registers its copy engines during probe, a moment after the
+# modprobe in nss-dwmac-up returns - worth a short wait from there, and
+# only from there (NSS_IRQ_WAIT_CE=1): with ath11k loaded but no copy
+# engines (a failed probe keeps the module loaded with its interrupts
+# freed, or the call lands inside the probe window) a hotplug would
+# otherwise stall ~5 s for nothing. Without the wait the bring-up's own
+# run, which comes after the probe, places them.
+have_ce() { [ -n "$(irq_list ce1)" ]; }
+if have_ce || { [ "$NSS_IRQ_WAIT_CE" = 1 ] && [ -d /sys/module/ath11k ] && poll_until 5 have_ce; }; then
+	pin ce1 1
+	pin ce2 1
+	pin ce3 1
+elif [ -d /sys/module/ath11k ]; then
+	log "no Wi-Fi copy-engine interrupts yet (ath11k loaded, not probed)"
+else
+	log "no Wi-Fi copy engines to place (ath11k not loaded)"
+fi
+
+# pri_map is the driver's table, set once at module load and written
+# through to the firmware entry by entry; only the entries that differ
+# are written (one message each), and the end state is read back.
+if [ "$MODEM" = 1 ] && [ "$FW" = 1 ]; then
+	if ! pri_map_is "1 1 1 1"; then
+		read -r _ m0 m1 m2 m3 < $NSS_RPS/pri_map 2>/dev/null
+		p=0
+		for m in "$m0" "$m1" "$m2" "$m3"; do
+			[ "$m" = 1 ] || echo "$p 1" > $NSS_RPS/pri_map 2>/dev/null
+			p=$((p + 1))
+		done
+	fi
+	if pri_map_is "1 1 1 1"; then
+		PINNED="$PINNED n2h->queue1/cpu$Q1CPU(modem:cpu$MCPU)"
 	else
-		log "modem present: cannot move the N2H delivery to cpu 1"
+		log "modem present: cannot move the N2H delivery to queue1"
 	fi
 fi
 
